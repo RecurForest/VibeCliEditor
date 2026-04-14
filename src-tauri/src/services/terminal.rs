@@ -1,0 +1,215 @@
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::thread;
+
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use tauri::{AppHandle, Emitter};
+use uuid::Uuid;
+
+use crate::models::terminal::{
+    PathInsertMode, ShellKind, TerminalExitEvent, TerminalOutputEvent, TerminalSessionInfo,
+};
+use crate::services::path_insert;
+
+pub struct TerminalState {
+    sessions: Mutex<HashMap<String, TerminalSession>>,
+}
+
+impl Default for TerminalState {
+    fn default() -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+struct TerminalSession {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    working_dir: PathBuf,
+    shell_kind: ShellKind,
+}
+
+impl TerminalState {
+    pub fn start_session(
+        &self,
+        app: AppHandle,
+        working_dir: String,
+        cols: u16,
+        rows: u16,
+        shell_kind: ShellKind,
+    ) -> Result<TerminalSessionInfo, String> {
+        let working_dir = std::fs::canonicalize(working_dir).map_err(|error| error.to_string())?;
+        let pty_system = native_pty_system();
+        let pty_pair = pty_system
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| error.to_string())?;
+
+        let mut command = shell_command(shell_kind);
+        command.cwd(working_dir.clone());
+
+        let child = pty_pair
+            .slave
+            .spawn_command(command)
+            .map_err(|error| error.to_string())?;
+
+        let mut reader = pty_pair
+            .master
+            .try_clone_reader()
+            .map_err(|error| error.to_string())?;
+        let writer = pty_pair
+            .master
+            .take_writer()
+            .map_err(|error| error.to_string())?;
+
+        let session_id = Uuid::new_v4().to_string();
+        let output_session_id = session_id.clone();
+        let exit_session_id = session_id.clone();
+        let output_app = app.clone();
+        let exit_app = app;
+
+        thread::spawn(move || {
+            let mut buffer = [0_u8; 8192];
+
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(size) => {
+                        let data = String::from_utf8_lossy(&buffer[..size]).to_string();
+                        let _ = output_app.emit(
+                            "terminal-output",
+                            TerminalOutputEvent {
+                                session_id: output_session_id.clone(),
+                                data,
+                            },
+                        );
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            let _ = exit_app.emit(
+                "terminal-exit",
+                TerminalExitEvent {
+                    session_id: exit_session_id,
+                    exit_code: None,
+                },
+            );
+        });
+
+        let session = TerminalSession {
+            child,
+            master: pty_pair.master,
+            writer,
+            working_dir: working_dir.clone(),
+            shell_kind,
+        };
+
+        self.sessions().insert(session_id.clone(), session);
+
+        Ok(TerminalSessionInfo {
+            session_id,
+            shell_kind: shell_kind.as_str().to_string(),
+            working_dir: working_dir.to_string_lossy().to_string(),
+        })
+    }
+
+    pub fn write(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
+        let mut sessions = self.sessions();
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| format!("Unknown terminal session: {session_id}"))?;
+
+        session
+            .writer
+            .write_all(data)
+            .map_err(|error| error.to_string())?;
+        session.writer.flush().map_err(|error| error.to_string())
+    }
+
+    pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+        let sessions = self.sessions();
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| format!("Unknown terminal session: {session_id}"))?;
+
+        session
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn insert_paths(
+        &self,
+        session_id: &str,
+        project_root: &str,
+        paths: Vec<String>,
+        mode: PathInsertMode,
+    ) -> Result<(), String> {
+        let mut sessions = self.sessions();
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| format!("Unknown terminal session: {session_id}"))?;
+        let project_root =
+            std::fs::canonicalize(project_root).map_err(|error| error.to_string())?;
+        let path_bufs = paths
+            .into_iter()
+            .map(std::fs::canonicalize)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+
+        let insert_text = path_insert::build_insert_text(
+            &project_root,
+            &session.working_dir,
+            &path_bufs,
+            session.shell_kind,
+            mode,
+        );
+
+        session
+            .writer
+            .write_all(insert_text.as_bytes())
+            .map_err(|error| error.to_string())?;
+        session.writer.flush().map_err(|error| error.to_string())
+    }
+
+    pub fn close_session(&self, session_id: &str) -> Result<(), String> {
+        let mut sessions = self.sessions();
+        if let Some(mut session) = sessions.remove(session_id) {
+            let _ = session.writer.flush();
+            session.child.kill().map_err(|error| error.to_string())?;
+        }
+
+        Ok(())
+    }
+
+    fn sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, TerminalSession>> {
+        self.sessions
+            .lock()
+            .expect("terminal sessions mutex poisoned")
+    }
+}
+
+fn shell_command(shell_kind: ShellKind) -> CommandBuilder {
+    match shell_kind {
+        ShellKind::Cmd => CommandBuilder::new("cmd.exe"),
+        ShellKind::PowerShell => {
+            let mut command = CommandBuilder::new("powershell.exe");
+            command.arg("-NoLogo");
+            command
+        }
+    }
+}
