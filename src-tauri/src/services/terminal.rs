@@ -12,6 +12,7 @@ use crate::models::terminal::{
     PathInsertMode, ShellKind, TerminalExitEvent, TerminalOutputEvent, TerminalSessionInfo,
 };
 use crate::services::path_insert;
+use crate::services::paths::{path_for_shell, path_to_string};
 
 pub struct TerminalState {
     sessions: Mutex<HashMap<String, TerminalSession>>,
@@ -41,8 +42,10 @@ impl TerminalState {
         cols: u16,
         rows: u16,
         shell_kind: ShellKind,
+        startup_command: Option<String>,
     ) -> Result<TerminalSessionInfo, String> {
         let working_dir = std::fs::canonicalize(working_dir).map_err(|error| error.to_string())?;
+        let display_working_dir = path_to_string(&working_dir);
         let pty_system = native_pty_system();
         let pty_pair = pty_system
             .openpty(PtySize {
@@ -54,7 +57,7 @@ impl TerminalState {
             .map_err(|error| error.to_string())?;
 
         let mut command = shell_command(shell_kind);
-        command.cwd(working_dir.clone());
+        command.cwd(path_for_shell(&working_dir));
 
         let child = pty_pair
             .slave
@@ -65,10 +68,19 @@ impl TerminalState {
             .master
             .try_clone_reader()
             .map_err(|error| error.to_string())?;
-        let writer = pty_pair
+        let mut writer = pty_pair
             .master
             .take_writer()
             .map_err(|error| error.to_string())?;
+
+        let startup_input =
+            build_startup_input(&display_working_dir, shell_kind, startup_command.as_deref());
+        if !startup_input.is_empty() {
+            writer
+                .write_all(startup_input.as_bytes())
+                .map_err(|error| error.to_string())?;
+            writer.flush().map_err(|error| error.to_string())?;
+        }
 
         let session_id = Uuid::new_v4().to_string();
         let output_session_id = session_id.clone();
@@ -118,7 +130,7 @@ impl TerminalState {
         Ok(TerminalSessionInfo {
             session_id,
             shell_kind: shell_kind.as_str().to_string(),
-            working_dir: working_dir.to_string_lossy().to_string(),
+            working_dir: display_working_dir,
         })
     }
 
@@ -212,4 +224,40 @@ fn shell_command(shell_kind: ShellKind) -> CommandBuilder {
             command
         }
     }
+}
+
+fn build_startup_input(
+    working_dir: &str,
+    shell_kind: ShellKind,
+    startup_command: Option<&str>,
+) -> String {
+    let mut commands = vec![match shell_kind {
+        ShellKind::Cmd => format!("cd /d {}", escape_for_cmd(working_dir)),
+        ShellKind::PowerShell => {
+            format!(
+                "Set-Location -LiteralPath {}",
+                escape_for_powershell(working_dir)
+            )
+        }
+    }];
+
+    if let Some(startup_command) = startup_command.filter(|value| !value.trim().is_empty()) {
+        commands.push(startup_command.trim().to_string());
+    }
+
+    let mut input = String::new();
+    for command in commands {
+        input.push_str(&command);
+        input.push('\r');
+    }
+
+    input
+}
+
+fn escape_for_cmd(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn escape_for_powershell(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }

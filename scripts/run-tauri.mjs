@@ -24,6 +24,7 @@ env.CARGO_TARGET_DIR = cargoTargetDir;
 env.CARGO_BUILD_JOBS = "1";
 env.CARGO_INCREMENTAL = "0";
 env.CARGO_BUILD_PIPELINING = "false";
+env.JTERMINAL_PROJECT_ROOT = projectRoot;
 
 if (process.platform === "win32" && command === "dev") {
   cleanupWindowsDevProcesses();

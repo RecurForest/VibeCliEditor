@@ -7,7 +7,8 @@ import {
   Save,
   X,
 } from "lucide-react";
-import type { ChangeEvent } from "react";
+import { useRef } from "react";
+import type { ChangeEvent, UIEvent } from "react";
 import type { CursorPosition, EditorTab } from "../../types";
 
 interface EditorPaneProps {
@@ -35,6 +36,7 @@ export function EditorPane({
   onSelectTab,
   tabs,
 }: EditorPaneProps) {
+  const lineNumberRef = useRef<HTMLDivElement | null>(null);
   const activeContent = activeTab?.content ?? "";
   const lineCount = Math.max(1, activeContent.split("\n").length);
   const language = getLanguageLabel(activeTab?.name);
@@ -44,6 +46,12 @@ export function EditorPane({
     const nextContent = event.currentTarget.value;
     onContentChange(nextContent);
     onCursorChange(nextContent, event.currentTarget.selectionStart);
+  }
+
+  function handleScroll(event: UIEvent<HTMLTextAreaElement>) {
+    if (lineNumberRef.current) {
+      lineNumberRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
   }
 
   return (
@@ -100,7 +108,7 @@ export function EditorPane({
       <div className="editor__surface">
         {activeTab ? (
           <div className="editor__code">
-            <div className="editor__line-numbers" aria-hidden="true">
+            <div className="editor__line-numbers" aria-hidden="true" ref={lineNumberRef}>
               {Array.from({ length: lineCount }).map((_, index) => (
                 <div className="editor__line-number" key={index + 1}>
                   {index + 1}
@@ -117,6 +125,7 @@ export function EditorPane({
               onKeyUp={(event) =>
                 onCursorChange(event.currentTarget.value, event.currentTarget.selectionStart)
               }
+              onScroll={handleScroll}
               spellCheck={false}
               value={activeContent}
             />

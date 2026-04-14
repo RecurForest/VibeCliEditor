@@ -4,6 +4,7 @@ import type { ContextMenuState, FileNode } from "../../types";
 import { replaceNodeChildren } from "../../utils/tree";
 
 interface UseFileTreeOptions {
+  onResolvedRootPath?: (rootPath: string) => void;
   rootPath: string | null;
   refreshToken: number;
   onInsertPaths: (paths: string[]) => Promise<void>;
@@ -11,6 +12,7 @@ interface UseFileTreeOptions {
 }
 
 export function useFileTree({
+  onResolvedRootPath,
   rootPath,
   refreshToken,
   onInsertPaths,
@@ -45,6 +47,7 @@ export function useFileTree({
         const node = await invoke<FileNode>("scan_working_dir", { rootPath });
         if (!cancelled) {
           setRootNode(node);
+          onResolvedRootPath?.(node.absPath);
         }
       } catch (reason) {
         if (!cancelled) {
@@ -58,7 +61,7 @@ export function useFileTree({
     return () => {
       cancelled = true;
     };
-  }, [refreshToken, rootPath]);
+  }, [onResolvedRootPath, refreshToken, rootPath]);
 
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {

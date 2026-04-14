@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   PathInsertMode,
   ShellKind,
@@ -12,24 +12,32 @@ import type {
 } from "../../types";
 
 interface UseTerminalOptions {
+  launchDir: string | null;
   shellKind: ShellKind;
   workingDir: string | null;
 }
 
 type TerminalStatus = "idle" | "starting" | "ready" | "error";
 
-export function useTerminal({ shellKind, workingDir }: UseTerminalOptions) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOptions) {
+  const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const lastWorkingDirRef = useRef<string | null>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [status, setStatus] = useState<TerminalStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [activeShellKind, setActiveShellKind] = useState<ShellKind | null>(null);
+  const [terminalReady, setTerminalReady] = useState(false);
+
+  const containerRef = useCallback((node: HTMLDivElement | null) => {
+    setContainerElement(node);
+  }, []);
 
   useEffect(() => {
-    if (!containerRef.current || terminalRef.current) {
+    if (!containerElement || terminalRef.current) {
       return;
     }
 
@@ -63,12 +71,13 @@ export function useTerminal({ shellKind, workingDir }: UseTerminalOptions) {
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.open(containerRef.current);
+    terminal.open(containerElement);
     fitAddon.fit();
     terminal.focus();
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    setTerminalReady(true);
 
     const resizeObserver = new ResizeObserver(() => {
       if (!terminalRef.current || !fitAddonRef.current) {
@@ -84,7 +93,7 @@ export function useTerminal({ shellKind, workingDir }: UseTerminalOptions) {
         }).catch(() => undefined);
       }
     });
-    resizeObserver.observe(containerRef.current);
+    resizeObserver.observe(containerElement);
 
     const disposable = terminal.onData((data) => {
       if (!sessionIdRef.current) {
@@ -108,12 +117,13 @@ export function useTerminal({ shellKind, workingDir }: UseTerminalOptions) {
         void invoke("terminal_close", { sessionId: sessionIdRef.current }).catch(() => undefined);
       }
 
+      setTerminalReady(false);
       terminal.dispose();
       fitAddonRef.current = null;
       terminalRef.current = null;
       sessionIdRef.current = null;
     };
-  }, []);
+  }, [containerElement]);
 
   useEffect(() => {
     let disposed = false;
@@ -136,6 +146,7 @@ export function useTerminal({ shellKind, workingDir }: UseTerminalOptions) {
       if (event.payload.sessionId === sessionIdRef.current) {
         sessionIdRef.current = null;
         setSessionId(null);
+        setActiveShellKind(null);
         setStatus("idle");
       }
     }).then((dispose) => {
@@ -153,82 +164,165 @@ export function useTerminal({ shellKind, workingDir }: UseTerminalOptions) {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  const resetViewport = useCallback(
+    (nextWorkingDir: string | null) => {
+      const terminal = terminalRef.current;
 
-    async function startTerminal() {
-      if (!workingDir || !terminalRef.current || !fitAddonRef.current) {
-        setStatus("idle");
-        setSessionId(null);
-        setError(null);
+      if (!terminal) {
         return;
       }
 
-      if (sessionIdRef.current) {
-        await invoke("terminal_close", { sessionId: sessionIdRef.current }).catch(() => undefined);
-        sessionIdRef.current = null;
-        setSessionId(null);
+      terminal.reset();
+      terminal.clear();
+
+      if (nextWorkingDir) {
+        terminal.writeln("\u001b[1mJterminal\u001b[0m");
+        terminal.writeln(`workspace: ${nextWorkingDir}`);
+        terminal.writeln("");
+      }
+    },
+    [],
+  );
+
+  const closeSession = useCallback(async () => {
+    const currentSessionId = sessionIdRef.current;
+
+    if (currentSessionId) {
+      await invoke("terminal_close", { sessionId: currentSessionId }).catch(() => undefined);
+      sessionIdRef.current = null;
+    }
+
+    setSessionId(null);
+    setActiveShellKind(null);
+    setStatus("idle");
+    setError(null);
+    resetViewport(workingDir);
+  }, [resetViewport, workingDir]);
+
+  const startSession = useCallback(
+    async (initialCommand?: string | null) => {
+      const targetDir = launchDir ?? workingDir;
+
+      if (!targetDir) {
+        throw new Error("Open a workspace folder first.");
       }
 
-      fitAddonRef.current.fit();
-      terminalRef.current.reset();
-      terminalRef.current.clear();
-      terminalRef.current.writeln("\u001b[1mJterminal\u001b[0m");
-      terminalRef.current.writeln(`workspace: ${workingDir}`);
-      terminalRef.current.writeln("");
+      if (!terminalReady || !terminalRef.current || !fitAddonRef.current) {
+        throw new Error("Terminal view is not ready yet.");
+      }
+
+      if (sessionIdRef.current) {
+        await closeSession();
+      }
+
+      const terminal = terminalRef.current;
+      const fitAddon = fitAddonRef.current;
+      fitAddon.fit();
+      resetViewport(targetDir);
       setStatus("starting");
       setError(null);
 
       try {
         const session = await invoke<TerminalSessionInfo>("start_terminal", {
-          cols: terminalRef.current.cols,
-          rows: terminalRef.current.rows,
+          cols: terminal.cols,
+          rows: terminal.rows,
           shellKind,
-          workingDir,
+          startupCommand: initialCommand?.trim() ? initialCommand.trim() : null,
+          workingDir: targetDir,
         });
-
-        if (cancelled) {
-          await invoke("terminal_close", { sessionId: session.sessionId }).catch(() => undefined);
-          return;
-        }
 
         sessionIdRef.current = session.sessionId;
         setSessionId(session.sessionId);
+        setActiveShellKind(session.shellKind);
         setStatus("ready");
-        terminalRef.current.focus();
+        terminal.focus();
+
+        return session.sessionId;
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
         setError(message);
         setStatus("error");
-        terminalRef.current.writeln(`[terminal start failed] ${message}`);
+        terminal.writeln(`[terminal start failed] ${message}`);
+        throw reason;
       }
+    },
+    [closeSession, launchDir, resetViewport, shellKind, terminalReady, workingDir],
+  );
+
+  useEffect(() => {
+    const previousWorkingDir = lastWorkingDirRef.current;
+    lastWorkingDirRef.current = workingDir;
+
+    if (!terminalReady) {
+      return;
     }
 
-    void startTerminal();
+    if (!workingDir) {
+      void closeSession();
+      return;
+    }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [shellKind, workingDir]);
+    if (previousWorkingDir && previousWorkingDir !== workingDir && sessionIdRef.current) {
+      void closeSession();
+      return;
+    }
+
+    if (!sessionIdRef.current) {
+      resetViewport(workingDir);
+    }
+  }, [closeSession, resetViewport, terminalReady, workingDir]);
+
+  const focusTerminal = useCallback(() => {
+    terminalRef.current?.focus();
+  }, []);
+
+  const openShell = useCallback(() => {
+    void startSession().catch(() => undefined);
+  }, [startSession]);
+
+  const launchCodex = useCallback(() => {
+    void startSession("codex --yolo").catch(() => undefined);
+  }, [startSession]);
+
+  const launchClaude = useCallback(() => {
+    void startSession("claude").catch(() => undefined);
+  }, [startSession]);
+
+  const clearTerminal = useCallback(() => {
+    terminalRef.current?.clear();
+    terminalRef.current?.focus();
+  }, []);
+
+  const closeTerminal = useCallback(() => {
+    void closeSession();
+  }, [closeSession]);
 
   async function insertPaths(paths: string[], projectRoot: string, mode: PathInsertMode) {
-    if (!sessionIdRef.current) {
-      throw new Error("Terminal session is not ready yet.");
-    }
+    const readySessionId = sessionIdRef.current ?? (await startSession());
 
     await invoke("insert_paths", {
       mode,
       paths,
       projectRoot,
-      sessionId: sessionIdRef.current,
+      sessionId: readySessionId,
     });
     terminalRef.current?.focus();
   }
 
   return {
+    activeShellKind,
+    canLaunch: Boolean(workingDir) && terminalReady,
+    clearTerminal,
+    closeTerminal,
     containerRef,
     error,
+    launchDir: launchDir ?? workingDir,
+    focusTerminal,
     insertPaths,
+    isSessionActive: Boolean(sessionId),
+    launchClaude,
+    launchCodex,
+    openShell,
     sessionId,
     status,
   };

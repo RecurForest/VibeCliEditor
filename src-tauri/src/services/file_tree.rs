@@ -6,6 +6,7 @@ use std::time::UNIX_EPOCH;
 use pathdiff::diff_paths;
 
 use crate::models::file_node::FileNode;
+use crate::services::paths::path_to_string;
 
 pub fn scan_root(root: &Path) -> Result<FileNode, String> {
     let root = normalize_directory(root)?;
@@ -59,12 +60,12 @@ fn build_node(root: &Path, path: &Path, include_children: bool) -> Result<FileNo
     };
 
     Ok(FileNode {
-        id: path.to_string_lossy().to_string(),
+        id: path_to_string(path),
         name: path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string()),
-        abs_path: path.to_string_lossy().to_string(),
+            .unwrap_or_else(|| path_to_string(path)),
+        abs_path: path_to_string(path),
         rel_path: relative_path(root, path),
         is_dir: metadata.is_dir(),
         size: metadata.is_file().then_some(metadata.len()),

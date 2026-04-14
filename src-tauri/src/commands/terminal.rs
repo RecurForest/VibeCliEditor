@@ -11,6 +11,7 @@ pub fn start_terminal(
     cols: u16,
     rows: u16,
     shell_kind: String,
+    startup_command: Option<String>,
 ) -> Result<TerminalSessionInfo, String> {
     state.start_session(
         app,
@@ -18,6 +19,7 @@ pub fn start_terminal(
         cols,
         rows,
         ShellKind::try_from(shell_kind)?,
+        startup_command,
     )
 }
 

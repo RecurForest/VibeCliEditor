@@ -1,9 +1,16 @@
-import { Blocks, Files, GitBranch, Play, Search, Settings, UserCircle2 } from "lucide-react";
+import { Blocks, Files, FolderOpen, GitBranch, Play, Search, Settings, UserCircle2 } from "lucide-react";
 
-export function ActivityBar() {
+interface ActivityBarProps {
+  onOpenFolder: () => void;
+}
+
+export function ActivityBar({ onOpenFolder }: ActivityBarProps) {
   return (
     <aside className="activity-bar">
       <div className="activity-bar__group">
+        <button className="activity-bar__item" onClick={onOpenFolder} title="Open Folder" type="button">
+          <FolderOpen size={20} />
+        </button>
         <button className="activity-bar__item" data-active="true" type="button">
           <Files size={20} />
         </button>
