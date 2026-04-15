@@ -20,6 +20,7 @@ interface UseTerminalOptions {
 type TerminalStatus = "idle" | "starting" | "ready" | "error";
 
 export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOptions) {
+  const terminalBackground = "#252526";
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -49,8 +50,8 @@ export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOpt
       fontSize: 13,
       scrollback: 5000,
       theme: {
-        background: "#181818",
-        black: "#181818",
+        background: terminalBackground,
+        black: terminalBackground,
         blue: "#569cd6",
         brightBlack: "#636369",
         brightBlue: "#9cdcfe",

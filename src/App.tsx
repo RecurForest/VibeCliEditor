@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ChevronDown,
   FolderOpen,
   Maximize2,
   Minimize2,
@@ -9,30 +10,55 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { useEditor } from "./components/Editor/useEditor";
+import appIcon from "./assets/jterminal.png";
 import { FileTree } from "./components/FileTree/FileTree";
 import { useFileTree } from "./components/FileTree/useFileTree";
 import { StatusBar } from "./components/StatusBar/StatusBar";
+import { InlineCmdTerminal } from "./components/TerminalPane/InlineCmdTerminal";
 import { TerminalPane } from "./components/TerminalPane/TerminalPane";
 import { useTerminal } from "./components/TerminalPane/useTerminal";
 import type { FileNode, ShellKind } from "./types";
 import "./App.css";
 
 const appWindow = getCurrentWindow();
+const RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
+const MAX_RECENT_FOLDERS = 8;
 
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [bootError, setBootError] = useState<string | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
+  const [isInlineTerminalVisible, setIsInlineTerminalVisible] = useState(false);
+  const [recentFolders, setRecentFolders] = useState<string[]>(() => loadRecentFolders());
   const shellKind: ShellKind = "cmd";
+  const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
 
   const editor = useEditor({
     rootPath,
   });
+
+  const currentWorkspaceName = useMemo(() => getWorkspaceName(rootPath), [rootPath]);
+  const currentWorkspaceInitials = useMemo(
+    () => getWorkspaceInitials(currentWorkspaceName),
+    [currentWorkspaceName],
+  );
+  const visibleRecentFolders = useMemo(
+    () => recentFolders.filter((path) => path !== rootPath),
+    [recentFolders, rootPath],
+  );
 
   const handleResolvedRootPath = useCallback((resolvedRootPath: string) => {
     setRootPath((currentRootPath) =>
@@ -116,7 +142,64 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!rootPath) {
+      return;
+    }
+
+    setRecentFolders((currentFolders) => {
+      const nextFolders = pushRecentFolder(currentFolders, rootPath);
+      if (areStringArraysEqual(currentFolders, nextFolders)) {
+        return currentFolders;
+      }
+
+      persistRecentFolders(nextFolders);
+      return nextFolders;
+    });
+  }, [rootPath]);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (!workspaceSwitcherRef.current?.contains(target)) {
+        setIsWorkspaceMenuOpen(false);
+      }
+    }
+
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsWorkspaceMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeydown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, []);
+
+  const openWorkspace = useCallback((nextRootPath: string) => {
+    setRootPath(nextRootPath);
+    setRefreshToken((value) => value + 1);
+    setBootError(null);
+    setIsWorkspaceMenuOpen(false);
+  }, []);
+
+  const openInlineTerminal = useCallback(() => {
+    setIsInlineTerminalVisible(true);
+    setIsWorkspaceMenuOpen(false);
+  }, []);
+
   async function handlePickDirectory() {
+    setIsWorkspaceMenuOpen(false);
+
     const result = await open({
       defaultPath: rootPath ?? undefined,
       directory: true,
@@ -125,9 +208,7 @@ function App() {
     });
 
     if (typeof result === "string") {
-      setRootPath(result);
-      setRefreshToken((value) => value + 1);
-      setBootError(null);
+      openWorkspace(result);
     }
   }
 
@@ -171,19 +252,84 @@ function App() {
         onMouseDown={handleTitlebarMouseDown}
       >
         <div className="app-titlebar__left">
-          <div className="app-titlebar__brand-group">
-            <SquareTerminal className="app-titlebar__brand-icon" size={16} />
+          <div className="app-titlebar__app-icon" aria-hidden="true">
+            <img alt="" className="app-titlebar__app-icon-image" src={appIcon} />
           </div>
 
-          <div className="app-titlebar__toolbar">
+          <div className="workspace-switcher" data-no-drag="true" ref={workspaceSwitcherRef}>
             <button
-              className="titlebar-button titlebar-button--subtle"
-              onClick={() => void handlePickDirectory()}
+              aria-expanded={isWorkspaceMenuOpen}
+              className="workspace-switcher__trigger"
+              onClick={() => setIsWorkspaceMenuOpen((value) => !value)}
               type="button"
             >
-              <FolderOpen size={14} />
-              Open
+              <span className="workspace-switcher__avatar" aria-hidden="true">
+                {currentWorkspaceInitials}
+              </span>
+              <span className="workspace-switcher__copy">
+                <span className="workspace-switcher__label" title={rootPath ?? currentWorkspaceName}>
+                  {currentWorkspaceName}
+                </span>
+              </span>
+              <ChevronDown
+                className="workspace-switcher__chevron"
+                data-open={isWorkspaceMenuOpen}
+                size={14}
+              />
             </button>
+
+            <button
+              className="workspace-switcher__terminal-button"
+              disabled={!rootPath}
+              onClick={openInlineTerminal}
+              title="Open bottom terminal"
+              type="button"
+            >
+              <SquareTerminal size={14} />
+            </button>
+
+            {isWorkspaceMenuOpen ? (
+              <div className="workspace-switcher__menu" data-no-drag="true">
+                <button
+                  className="workspace-switcher__action"
+                  onClick={() => void handlePickDirectory()}
+                  type="button"
+                >
+                  <FolderOpen size={14} />
+                  Open Folder
+                </button>
+
+                <div className="workspace-switcher__section">
+                  <div className="workspace-switcher__section-label">Recent Folders</div>
+
+                  {visibleRecentFolders.length ? (
+                    visibleRecentFolders.map((path) => {
+                      const name = getWorkspaceName(path);
+
+                      return (
+                        <button
+                          className="workspace-switcher__recent-item"
+                          key={path}
+                          onClick={() => openWorkspace(path)}
+                          title={path}
+                          type="button"
+                        >
+                          <span className="workspace-switcher__recent-avatar" aria-hidden="true">
+                            {getWorkspaceInitials(name)}
+                          </span>
+                          <span className="workspace-switcher__recent-copy">
+                            <span className="workspace-switcher__recent-name">{name}</span>
+                            <span className="workspace-switcher__recent-path">{path}</span>
+                          </span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="workspace-switcher__empty">No recent folders yet.</div>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -250,16 +396,41 @@ function App() {
 
               <PanelGroup className="workbench__content" direction="horizontal">
                 <Panel defaultSize={66} minSize={40}>
-                  <EditorPane
-                    activeTab={editor.activeTab}
-                    cursor={editor.cursor}
-                    error={editor.error}
-                    onCloseTab={editor.closeTab}
-                    onContentChange={editor.updateActiveContent}
-                    onCursorChange={editor.setCursorFromSelection}
-                    onSelectTab={editor.setActiveTabPath}
-                    tabs={editor.tabs}
-                  />
+                  {isInlineTerminalVisible ? (
+                    <PanelGroup className="editor-stack" direction="vertical">
+                      <Panel defaultSize={70} minSize={28}>
+                        <EditorPane
+                          activeTab={editor.activeTab}
+                          error={editor.error}
+                          onCloseTab={editor.closeTab}
+                          onContentChange={editor.updateActiveContent}
+                          onCursorChange={editor.setCursorFromSelection}
+                          onSelectTab={editor.setActiveTabPath}
+                          tabs={editor.tabs}
+                        />
+                      </Panel>
+
+                      <PanelResizeHandle className="resize-handle resize-handle--row" />
+
+                      <Panel defaultSize={30} minSize={18}>
+                        <InlineCmdTerminal
+                          launchDir={terminalLaunchDir}
+                          onClose={() => setIsInlineTerminalVisible(false)}
+                          workingDir={rootPath}
+                        />
+                      </Panel>
+                    </PanelGroup>
+                  ) : (
+                    <EditorPane
+                      activeTab={editor.activeTab}
+                      error={editor.error}
+                      onCloseTab={editor.closeTab}
+                      onContentChange={editor.updateActiveContent}
+                      onCursorChange={editor.setCursorFromSelection}
+                      onSelectTab={editor.setActiveTabPath}
+                      tabs={editor.tabs}
+                    />
+                  )}
                 </Panel>
 
                 <PanelResizeHandle className="resize-handle resize-handle--inner" />
@@ -355,4 +526,63 @@ function getParentPath(path: string) {
   const normalized = path.replace(/[/\\]+$/, "");
   const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
   return separatorIndex > 0 ? normalized.slice(0, separatorIndex) : null;
+}
+
+function loadRecentFolders() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(RECENT_FOLDERS_STORAGE_KEY);
+    if (!rawValue) {
+      return [];
+    }
+
+    const parsedValue = JSON.parse(rawValue);
+    return Array.isArray(parsedValue)
+      ? parsedValue.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistRecentFolders(paths: string[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(RECENT_FOLDERS_STORAGE_KEY, JSON.stringify(paths));
+  } catch {
+    // Ignore storage errors and continue without persistence.
+  }
+}
+
+function pushRecentFolder(paths: string[], nextPath: string) {
+  return [nextPath, ...paths.filter((path) => path !== nextPath)].slice(0, MAX_RECENT_FOLDERS);
+}
+
+function areStringArraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function getWorkspaceName(path: string | null) {
+  if (!path) {
+    return "Open Workspace";
+  }
+
+  const normalized = path.replace(/[/\\]+$/, "");
+  return normalized.split(/[/\\]/).pop() || normalized;
+}
+
+function getWorkspaceInitials(name: string) {
+  const parts = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+
+  const compactName = (parts[0] ?? name.replace(/[^A-Za-z0-9]/g, "")).toUpperCase();
+  return compactName.slice(0, 2) || "JT";
 }

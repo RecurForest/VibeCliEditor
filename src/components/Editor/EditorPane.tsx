@@ -8,11 +8,10 @@ import {
 } from "lucide-react";
 import { useRef } from "react";
 import type { ChangeEvent, UIEvent } from "react";
-import type { CursorPosition, EditorTab } from "../../types";
+import type { EditorTab } from "../../types";
 
 interface EditorPaneProps {
   activeTab: EditorTab | null;
-  cursor: CursorPosition;
   error: string | null;
   onCloseTab: (absPath: string) => void;
   onContentChange: (content: string) => void;
@@ -23,7 +22,6 @@ interface EditorPaneProps {
 
 export function EditorPane({
   activeTab,
-  cursor,
   error,
   onCloseTab,
   onContentChange,
@@ -34,7 +32,6 @@ export function EditorPane({
   const lineNumberRef = useRef<HTMLDivElement | null>(null);
   const activeContent = activeTab?.content ?? "";
   const lineCount = Math.max(1, activeContent.split("\n").length);
-  const language = getLanguageLabel(activeTab?.name);
   const breadcrumbs = activeTab?.relPath.split(/[\\/]/).filter(Boolean) ?? [];
 
   function handleChange(event: ChangeEvent<HTMLTextAreaElement>) {
@@ -131,44 +128,8 @@ export function EditorPane({
       </div>
 
       {error ? <div className="editor__error">{error}</div> : null}
-
-      <div className="editor__footer">
-        <span>{language}</span>
-        <span>
-          Ln {cursor.line}, Col {cursor.column}
-        </span>
-      </div>
     </section>
   );
-}
-
-function getLanguageLabel(fileName?: string) {
-  if (!fileName) {
-    return "Plain Text";
-  }
-
-  const extension = fileName.split(".").pop()?.toLowerCase();
-
-  switch (extension) {
-    case "ts":
-    case "tsx":
-      return "TypeScript";
-    case "js":
-    case "jsx":
-      return "JavaScript";
-    case "json":
-      return "JSON";
-    case "md":
-      return "Markdown";
-    case "rs":
-      return "Rust";
-    case "css":
-      return "CSS";
-    case "html":
-      return "HTML";
-    default:
-      return "Plain Text";
-  }
 }
 
 function getFileIcon(fileName: string) {
