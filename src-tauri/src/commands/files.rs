@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::models::file_node::FileNode;
+use crate::models::file_search_result::FileSearchResult;
 use crate::services::file_tree;
 use crate::services::paths::path_to_string;
 
@@ -37,6 +38,12 @@ pub fn write_file(root_path: String, file_path: String, content: String) -> Resu
     let root = PathBuf::from(root_path);
     let file = PathBuf::from(file_path);
     file_tree::write_file(&root, &file, content)
+}
+
+#[tauri::command]
+pub fn search_files(root_path: String, query: String) -> Result<Vec<FileSearchResult>, String> {
+    let root = PathBuf::from(root_path);
+    file_tree::search_files(&root, &query, 40)
 }
 
 #[tauri::command]

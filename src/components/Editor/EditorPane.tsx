@@ -7,7 +7,7 @@ import {
   X,
 } from "lucide-react";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type WheelEvent as ReactWheelEvent } from "react";
 import type { editor, IDisposable } from "monaco-editor";
 import type { EditorTab } from "../../types";
 import { MONACO_THEME, resolveEditorLanguage } from "./monaco";
@@ -33,6 +33,7 @@ export function EditorPane({
 }: EditorPaneProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const cursorListenerRef = useRef<IDisposable | null>(null);
+  const tabListRef = useRef<HTMLDivElement | null>(null);
   const breadcrumbs = activeTab?.relPath.split(/[\\/]/).filter(Boolean) ?? [];
   const language = useMemo(() => resolveEditorLanguage(activeTab?.name), [activeTab?.name]);
 
@@ -97,15 +98,45 @@ export function EditorPane({
       } else {
         onCursorChange(1, 1);
       }
+
+      const escapedPath =
+        typeof window.CSS?.escape === "function"
+          ? window.CSS.escape(activeTab.absPath)
+          : activeTab.absPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const activeTabButton = tabListRef.current?.querySelector<HTMLButtonElement>(
+        `.editor__tab[data-tab-path="${escapedPath}"]`,
+      );
+
+      activeTabButton?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [activeTab, onCursorChange]);
+  }, [activeTab, onCursorChange, tabs.length]);
+
+  function handleTabListWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    const tabListElement = event.currentTarget;
+
+    if (tabListElement.scrollWidth <= tabListElement.clientWidth) {
+      return;
+    }
+
+    const delta = Math.abs(event.deltaX) > 0 ? event.deltaX : event.deltaY;
+    if (delta === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    tabListElement.scrollLeft += delta;
+  }
 
   return (
     <section className="editor">
       <header className="editor__tabs">
-        <div className="editor__tab-list">
+        <div className="editor__tab-list" onWheel={handleTabListWheel} ref={tabListRef}>
           {tabs.map((tab) => {
             const isActive = tab.absPath === activeTab?.absPath;
             const isDirty = tab.content !== tab.savedContent;
@@ -114,6 +145,7 @@ export function EditorPane({
               <button
                 className="editor__tab"
                 data-active={isActive}
+                data-tab-path={tab.absPath}
                 key={tab.absPath}
                 onClick={() => onSelectTab(tab.absPath)}
                 type="button"

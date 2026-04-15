@@ -31,6 +31,7 @@
   --tab-active: #1e1e1e;
   --terminal-bg: #181818;
   --status-bg: var(--sidebar-bg);
+  --surface-radius: 6px;
   --danger: #f48771;
   --warning: #cca700;
   --success: #89d185;
@@ -221,7 +222,7 @@ button {
   width: min(420px, calc(100vw - 24px));
   padding: 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 14px;
+  border-radius: var(--surface-radius);
   background: #1f1f1f;
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
   overflow: hidden;
@@ -346,8 +347,131 @@ button {
 
 .app-titlebar__drag-space {
   flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   align-self: stretch;
   min-width: 48px;
+}
+
+.workspace-search {
+  position: relative;
+  display: flex;
+  width: min(100%, 560px);
+  min-width: 220px;
+  padding: 0 10px;
+}
+
+.workspace-search__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--surface-radius);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+}
+
+.workspace-search__field:focus-within {
+  border-color: rgba(0, 122, 204, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.workspace-search__icon,
+.workspace-search__spinner {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.workspace-search__spinner {
+  animation: workspace-search-spin 0.9s linear infinite;
+}
+
+.workspace-search__input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+}
+
+.workspace-search__input::placeholder {
+  color: var(--text-dim);
+}
+
+.workspace-search__input:disabled {
+  cursor: not-allowed;
+}
+
+.workspace-search__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 10px;
+  right: 10px;
+  z-index: 55;
+  max-height: min(420px, calc(100vh - 120px));
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--surface-radius);
+  background: #1f1f1f;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.38);
+  overflow-y: auto;
+}
+
+.workspace-search__result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-search__result[data-highlighted="true"],
+.workspace-search__result:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.workspace-search__result-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-search__result-path {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-search__empty {
+  padding: 10px 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+@keyframes workspace-search-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .window-controls {
@@ -651,14 +775,24 @@ button {
   display: flex;
   min-width: 0;
   overflow: auto hidden;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+
+.editor__tab-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .editor__tab {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  max-width: 220px;
+  max-width: min(300px, 34vw);
   padding: 0 12px;
   border: 0;
   border-right: 1px solid var(--border);
@@ -673,6 +807,7 @@ button {
 }
 
 .editor__tab-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -723,6 +858,39 @@ button {
 .editor__monaco {
   height: 100%;
   min-height: 0;
+}
+
+.monaco-editor .find-widget {
+  height: 34px;
+}
+
+.monaco-editor .find-widget > .find-part,
+.monaco-editor .find-widget > .replace-part {
+  align-items: center;
+  min-height: 27px;
+}
+
+.monaco-editor .find-widget > .find-part .monaco-inputbox,
+.monaco-editor .find-widget > .replace-part .monaco-inputbox,
+.monaco-editor .find-widget > .find-part .monaco-inputbox > .ibwrapper,
+.monaco-editor .find-widget > .replace-part .monaco-inputbox > .ibwrapper,
+.monaco-editor .find-widget .matchesCount,
+.monaco-editor .find-widget .button {
+  display: flex;
+  align-items: center;
+}
+
+.monaco-editor .find-widget .button {
+  justify-content: center;
+}
+
+.monaco-editor .find-widget > .find-part .monaco-inputbox > .ibwrapper > .input,
+.monaco-editor .find-widget > .find-part .monaco-inputbox > .ibwrapper > .mirror,
+.monaco-editor .find-widget > .replace-part .monaco-inputbox > .ibwrapper > .input,
+.monaco-editor .find-widget > .replace-part .monaco-inputbox > .ibwrapper > .mirror {
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 20px;
 }
 
 .editor__code {
@@ -1045,8 +1213,10 @@ button {
   min-width: 220px;
   padding: 4px;
   border: 1px solid var(--border-strong);
+  border-radius: var(--surface-radius);
   background: #252526;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
 }
 
 .context-menu__button {

@@ -29,7 +29,8 @@ import { StatusBar } from "./components/StatusBar/StatusBar";
 import { InlineCmdTerminal } from "./components/TerminalPane/InlineCmdTerminal";
 import { TerminalPane } from "./components/TerminalPane/TerminalPane";
 import { useTerminal } from "./components/TerminalPane/useTerminal";
-import type { FileNode, ShellKind } from "./types";
+import { WorkspaceFileSearch } from "./components/WorkspaceSearch/WorkspaceFileSearch";
+import type { FileNode, FileSearchResult, ShellKind } from "./types";
 import "./App.css";
 
 const appWindow = getCurrentWindow();
@@ -239,6 +240,13 @@ function App() {
     }
   }
 
+  async function handleWorkspaceSearchOpen(result: FileSearchResult) {
+    await Promise.all([
+      fileTree.revealPath(result.absPath),
+      editor.openFile(createFileNodeFromSearchResult(result)),
+    ]);
+  }
+
   function handleTitlebarMouseDown(event: ReactMouseEvent<HTMLElement>) {
     if (event.button !== 0) {
       return;
@@ -360,7 +368,9 @@ function App() {
           </div>
         </div>
 
-        <div className="app-titlebar__drag-space" />
+        <div className="app-titlebar__drag-space">
+          <WorkspaceFileSearch onOpenResult={handleWorkspaceSearchOpen} rootPath={rootPath} />
+        </div>
 
         <div className="app-titlebar__right">
           <div className="window-controls">
@@ -612,6 +622,18 @@ function getWorkspaceInitials(name: string) {
 
   const compactName = (parts[0] ?? name.replace(/[^A-Za-z0-9]/g, "")).toUpperCase();
   return compactName.slice(0, 2) || "JT";
+}
+
+function createFileNodeFromSearchResult(result: FileSearchResult): FileNode {
+  return {
+    absPath: result.absPath,
+    children: undefined,
+    hasChildren: false,
+    id: result.absPath,
+    isDir: false,
+    name: result.name,
+    relPath: result.relPath,
+  };
 }
 
 function getInitialWorkspacePath() {

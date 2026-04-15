@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ContextMenuState, FileNode } from "../../types";
 import { replaceNodeChildren } from "../../utils/tree";
 
@@ -25,6 +25,11 @@ export function useFileTree({
   const [error, setError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const isLoading = Boolean(rootPath) && rootNode === null && error === null;
+  const rootNodeRef = useRef<FileNode | null>(null);
+
+  useEffect(() => {
+    rootNodeRef.current = rootNode;
+  }, [rootNode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,6 +190,48 @@ export function useFileTree({
     }
   }
 
+  async function revealPath(targetPath: string) {
+    const currentRootNode = rootNodeRef.current;
+    const resolvedRootPath = currentRootNode?.absPath ?? rootPath;
+
+    if (!resolvedRootPath || !currentRootNode || !isPathWithinRoot(targetPath, resolvedRootPath)) {
+      return;
+    }
+
+    const ancestorPaths = getAncestorDirectoryPaths(resolvedRootPath, targetPath);
+    let nextTree = currentRootNode;
+
+    setExpandedPaths((value) => mergeUniquePaths(value, ancestorPaths));
+
+    for (const dirPath of ancestorPaths) {
+      const directoryNode = findNodeByPath(nextTree, dirPath);
+      if (!directoryNode || !directoryNode.isDir || !directoryNode.hasChildren || directoryNode.children) {
+        continue;
+      }
+
+      setLoadingPaths((value) => mergeUniquePaths(value, [dirPath]));
+
+      try {
+        const children = await invoke<FileNode[]>("read_directory", {
+          dirPath,
+          rootPath: resolvedRootPath,
+        });
+        nextTree = replaceNodeChildren(nextTree, dirPath, children);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+        return;
+      } finally {
+        setLoadingPaths((value) => value.filter((path) => path !== dirPath));
+      }
+    }
+
+    rootNodeRef.current = nextTree;
+    setRootNode(nextTree);
+    setExpandedPaths((value) => mergeUniquePaths(value, ancestorPaths));
+    setSelectedPaths([targetPath]);
+    setContextMenu(null);
+  }
+
   return {
     closeContextMenu: () => setContextMenu(null),
     contextMenu,
@@ -197,8 +244,56 @@ export function useFileTree({
     isLoading,
     loadingPaths,
     quickInsert,
+    revealPath,
     rootNode,
     selectedPaths,
     toggleDirectory,
   };
+}
+
+function findNodeByPath(node: FileNode, targetPath: string): FileNode | null {
+  if (node.absPath === targetPath) {
+    return node;
+  }
+
+  for (const child of node.children ?? []) {
+    const match = findNodeByPath(child, targetPath);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function getAncestorDirectoryPaths(rootPath: string, targetPath: string) {
+  const paths: string[] = [];
+  let currentPath = getParentPath(targetPath);
+
+  while (currentPath && isPathWithinRoot(currentPath, rootPath)) {
+    paths.push(currentPath);
+    if (currentPath === rootPath) {
+      break;
+    }
+
+    currentPath = getParentPath(currentPath);
+  }
+
+  return Array.from(new Set(paths.reverse()));
+}
+
+function getParentPath(path: string) {
+  const normalized = path.replace(/[/\\]+$/, "");
+  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  return separatorIndex > 0 ? normalized.slice(0, separatorIndex) : null;
+}
+
+function isPathWithinRoot(path: string, rootPath: string) {
+  const normalizedPath = path.toLowerCase();
+  const normalizedRoot = rootPath.toLowerCase();
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}\\`) || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function mergeUniquePaths(paths: string[], nextPaths: string[]) {
+  return Array.from(new Set([...paths, ...nextPaths]));
 }

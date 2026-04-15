@@ -16,6 +16,7 @@ pub fn run() {
             commands::files::read_directory,
             commands::files::read_file,
             commands::files::write_file,
+            commands::files::search_files,
             commands::files::get_git_branch,
             commands::terminal::start_terminal,
             commands::terminal::terminal_write,

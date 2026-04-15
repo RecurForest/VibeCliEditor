@@ -46,6 +46,7 @@ export function FileTreeItem({
       <button
         className="explorer-tree__row"
         data-active={isActive}
+        data-path={node.absPath}
         data-selected={isSelected}
         onClick={(event) => onNodeClick(node, event.ctrlKey || event.metaKey)}
         onContextMenu={(event) => {

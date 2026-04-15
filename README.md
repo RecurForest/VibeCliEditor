@@ -1,133 +1,153 @@
 # Jterminal
 
-Jterminal 是一个基于 `Tauri 2 + React 19 + TypeScript + Rust` 的桌面工作台，目标是把工作区文件浏览、轻量文本编辑和集成终端放到同一个窗口里。
+<p align="center">
+  <img src="src/assets/jterminal.png" alt="Jterminal logo" width="96" />
+</p>
 
-当前仓库已经实现的是一个可运行的桌面原型，不再只是早期规划稿。本文档按现有代码说明项目，开发向结构说明见 [docs/CODE_WIKI.md](docs/CODE_WIKI.md)。
+<p align="center">
+  A desktop workspace built with Tauri 2, React 19, TypeScript and Rust.
+</p>
 
-## 当前功能
+<p align="center">
+  Jterminal 将文件树、Monaco 编辑器、集成终端和 AI CLI 入口整合到一个桌面窗口中，目标是提供一个轻量、直接、适合本地工程工作的开发工作台。
+</p>
 
-- 打开本地工作区目录，并在启动时自动解析默认根目录
-- 左侧文件树按目录优先排序，子目录按需懒加载
-- 过滤以 `.` 开头的隐藏文件和目录
-- 支持 `Ctrl` / `Cmd` 多选文件节点
-- 右键或工具栏将选中文件路径插入到终端
-- 中间编辑器支持多标签页、脏状态提示、行号和 `Ctrl` / `Cmd + S` 保存
-- 右侧终端基于 `xterm.js + portable-pty`
-- 可启动 `cmd.exe` 或 `PowerShell`
-- 可从终端工具栏直接启动 `codex --yolo` 或 `claude`
-- 自定义窗口标题栏、刷新按钮、Shell 切换和状态栏
+## Features
 
-## 当前限制
+- 自定义桌面工作台界面，包含标题栏、文件树、编辑区、终端区和状态栏
+- 基于 Monaco Editor 的代码编辑体验，支持常见代码文件语言识别
+- 工作区文件树支持懒加载、展开收起、右键菜单和多选
+- 顶部工作区文件搜索，支持模糊搜索并定位到左侧文件树后直接打开
+- 多标签编辑，支持脏状态提示和 `Ctrl/Cmd + S` 保存
+- 右侧终端与底部内联终端，默认基于 `cmd` 工作
+- 可从终端入口快速启动本地 AI CLI，例如 `codex` 和 `claude`
+- 左下角显示当前真实 Git 分支
+- 工作区切换支持最近目录，并以新窗口方式打开新的项目目录
 
-- 前端目前固定使用 `projectRelative` 模式插入路径，也就是按项目根目录生成相对路径
-- 终端会话没有实时跟踪用户在 Shell 中执行 `cd` 后的新工作目录
-- 编辑器是基于 `textarea` 的轻量实现，不包含语法高亮、LSP、diff 或格式化
-- 文件读写走的是文本接口，二进制文件不在当前支持范围
-- 终端快捷按钮依赖本机 `codex` 和 `claude` 命令已在 `PATH` 中可用
-- 当前仅支持 `cmd` 和 `powershell`
+## Preview
 
-## 技术栈
+当前项目更接近一个持续迭代中的桌面 IDE 风格原型，重点放在本地工作流整合而不是完整 IDE 功能覆盖。
 
-| 层 | 方案 |
+如果你准备将它发布到 GitHub，建议后续补充：
+
+- 应用截图或演示 GIF
+- LICENSE 文件
+- issue / pull request 模板
+
+## Tech Stack
+
+| Layer | Stack |
 | --- | --- |
-| 桌面壳 | `Tauri 2` |
-| 前端 | `React 19` + `TypeScript` + `Vite 7` |
-| 终端渲染 | `@xterm/xterm` + `@xterm/addon-fit` |
-| 布局 | `react-resizable-panels` |
-| 图标 | `lucide-react` |
-| 后端 | `Rust` |
-| PTY | `portable-pty` |
+| Desktop Shell | Tauri 2 |
+| Frontend | React 19 + TypeScript + Vite 7 |
+| Editor | Monaco Editor |
+| Terminal Rendering | xterm.js |
+| Layout | react-resizable-panels |
+| Backend | Rust |
+| PTY | portable-pty |
+| Icons | lucide-react |
 
-## 目录说明
+## Project Structure
 
 ```text
 Jterminal/
-  src/                     React 前端
-  src-tauri/               Tauri / Rust 后端
-  scripts/run-tauri.mjs    Tauri 启动包装脚本
-  docs/CODE_WIKI.md        代码结构说明
-  UI-code/                 早期界面参考稿，不参与当前主程序运行
-  __scaffold/              初始脚手架快照
+├─ src/                # React frontend
+├─ src-tauri/          # Tauri + Rust backend
+├─ public/             # Static assets
+├─ scripts/            # Development helper scripts
+├─ docs/               # Additional project docs
+├─ package.json
+└─ README.md
 ```
 
-## 开发运行
+## Getting Started
 
-### 依赖
+### Requirements
 
 - Node.js
-- `pnpm`
+- pnpm
 - Rust toolchain
-- 本机可用的 Tauri 开发环境
+- Tauri development environment
 
-### 安装
+当前项目主要按 Windows 桌面环境进行开发和验证。
+
+### Install
 
 ```bash
 pnpm install
 ```
 
-### 启动开发环境
+### Run In Development
 
 ```bash
 pnpm tauri dev
 ```
 
-仓库通过 `scripts/run-tauri.mjs` 启动 Tauri，它会做几件事：
-
-- 设置 `JTERMINAL_PROJECT_ROOT`
-- 为 Cargo 单独指定目标目录
-- 在 Windows 下尝试清理占用 `1420` / `1421` 端口的旧开发进程
-
-如果只想单独跑前端，也可以使用：
+如果你只想单独运行前端开发环境：
 
 ```bash
 pnpm dev
 ```
 
-### 构建
+### Build
 
 ```bash
 pnpm build
 pnpm tauri build
 ```
 
-## 运行行为说明
+## Usage Notes
 
-### 默认工作区
+- `Open Folder` 会以新窗口方式打开新的工作区，不会直接覆盖当前窗口内容
+- 顶部搜索框会在当前工作区内执行文件模糊搜索
+- Explorer 中选择文件后会在中间编辑区打开，并在状态栏显示当前文件信息
+- 终端相关快捷入口依赖本机已安装对应 CLI 命令
 
-后端命令 `get_default_root` 会按以下顺序解析默认目录：
+如果你希望快速使用 AI CLI 入口，请确保这些命令在本机 `PATH` 中可用：
 
-1. 优先使用环境变量 `JTERMINAL_PROJECT_ROOT`
-2. 当前目录如果同时存在 `package.json` 和 `src/`，则把它视为项目根目录
-3. 如果当前目录是 `src-tauri/`，则回退到它的父目录
-4. 否则使用当前进程目录
+- `codex`
+- `claude`
 
-### 文件树
+## Development Notes
 
-- 根目录首次扫描时会加载首层节点
-- 目录展开后再请求子节点
-- 所有文件操作都会校验路径是否仍在工作区根目录内
+仓库中的 `scripts/run-tauri.mjs` 会在开发启动时做一些额外处理：
 
-### 编辑器
+- 注入 `JTERMINAL_PROJECT_ROOT`
+- 配置独立的 Cargo target 目录
+- 在 Windows 下清理旧的开发端口占用进程
 
-- 打开文件时会缓存到标签页
-- 标签页显示未保存状态
-- 保存时调用 Tauri `write_file`
+## Roadmap
 
-### 终端
+- 增加文件监听与自动刷新
+- 增强终端工作目录同步能力
+- 补充更多编辑器能力，例如格式化、Diff、快捷操作
+- 完善设置项、快捷键和主题配置
+- 补充测试、发布流程和开源协作规范
 
-- 终端启动时会按当前选择的 Shell 创建 PTY 会话
-- 新会话会先切换到目标目录，再执行可选启动命令
-- 前端通过 Tauri event 接收 `terminal-output` 和 `terminal-exit`
+## Contributing
 
-## 开发文档
+欢迎提交 issue 或 pull request。
 
-- [代码结构说明](docs/CODE_WIKI.md)
+如果你准备参与开发，建议优先关注这些方向：
 
-## 下一步建议
+- UI/UX 细节打磨
+- 文件树与工作区交互
+- 编辑器体验增强
+- 终端能力与跨平台兼容性
 
-如果要继续推进这个项目，优先级比较合理的方向是：
+## License
 
-1. 补上终端当前目录跟踪，让路径插入真正基于实时 cwd
-2. 为文件树增加文件监听和刷新粒度优化
-3. 把编辑器从 `textarea` 升级到更适合代码编辑的组件
-4. 补测试和错误处理，尤其是终端生命周期与 Windows 兼容性
+当前仓库还没有附带 `LICENSE` 文件。
+
+如果你准备将项目公开到 GitHub，建议在发布前补充一个明确的开源协议，例如：
+
+- MIT
+- Apache-2.0
+- GPL-3.0
+
+## Acknowledgements
+
+- [Tauri](https://tauri.app/)
+- [React](https://react.dev/)
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/)
+- [xterm.js](https://xtermjs.org/)

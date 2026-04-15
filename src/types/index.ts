@@ -14,6 +14,12 @@ export interface FileNode {
   children?: FileNode[];
 }
 
+export interface FileSearchResult {
+  absPath: string;
+  name: string;
+  relPath: string;
+}
+
 export interface TerminalSessionInfo {
   sessionId: string;
   shellKind: ShellKind;

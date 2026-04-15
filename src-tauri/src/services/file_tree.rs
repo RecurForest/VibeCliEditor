@@ -6,6 +6,7 @@ use std::time::UNIX_EPOCH;
 use pathdiff::diff_paths;
 
 use crate::models::file_node::FileNode;
+use crate::models::file_search_result::FileSearchResult;
 use crate::services::paths::path_to_string;
 
 pub fn scan_root(root: &Path) -> Result<FileNode, String> {
@@ -48,6 +49,30 @@ pub fn write_file(root: &Path, file: &Path, content: String) -> Result<(), Strin
     }
 
     fs::write(file, content).map_err(|error| error.to_string())
+}
+
+pub fn search_files(root: &Path, query: &str, limit: usize) -> Result<Vec<FileSearchResult>, String> {
+    let root = normalize_directory(root)?;
+    let tokens = normalize_query_tokens(query);
+
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut matches = Vec::new();
+    collect_search_matches(&root, &root, &tokens, &mut matches)?;
+    matches.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.rel_path.cmp(&right.1.rel_path))
+    });
+
+    Ok(matches
+        .into_iter()
+        .take(limit)
+        .map(|(_, item)| item)
+        .collect())
 }
 
 fn build_node(root: &Path, path: &Path, include_children: bool) -> Result<FileNode, String> {
@@ -154,4 +179,134 @@ fn is_hidden(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| name.starts_with('.'))
         .unwrap_or(false)
+}
+
+fn collect_search_matches(
+    root: &Path,
+    current_dir: &Path,
+    tokens: &[String],
+    matches: &mut Vec<(i64, FileSearchResult)>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(current_dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+
+        if is_hidden(&path) {
+            continue;
+        }
+
+        if path.is_dir() {
+            collect_search_matches(root, &path, tokens, matches)?;
+            continue;
+        }
+
+        let relative = relative_path(root, &path);
+        let name = path
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| path_to_string(&path));
+
+        if let Some(score) = search_score(tokens, &name, &relative) {
+            matches.push((
+                score,
+                FileSearchResult {
+                    name,
+                    abs_path: path_to_string(&path),
+                    rel_path: relative,
+                },
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn normalize_query_tokens(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(normalize_search_text)
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn normalize_search_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|char| match char {
+            '\\' => '/',
+            _ => char.to_ascii_lowercase(),
+        })
+        .collect()
+}
+
+fn search_score(tokens: &[String], name: &str, relative: &str) -> Option<i64> {
+    let normalized_name = normalize_search_text(name);
+    let normalized_relative = normalize_search_text(relative);
+    let mut total_score = 0;
+
+    for token in tokens {
+        let name_score = fuzzy_score(token, &normalized_name).map(|score| score + 1_200);
+        let relative_score = fuzzy_score(token, &normalized_relative);
+
+        match name_score.max(relative_score) {
+            Some(score) => total_score += score,
+            None => return None,
+        }
+    }
+
+    Some(total_score)
+}
+
+fn fuzzy_score(query: &str, candidate: &str) -> Option<i64> {
+    if query.is_empty() || candidate.is_empty() {
+        return None;
+    }
+
+    if let Some(start_index) = candidate.find(query) {
+        return Some(8_000 - (start_index as i64 * 12) - (candidate.len() as i64 - query.len() as i64));
+    }
+
+    let candidate_chars = candidate.chars().collect::<Vec<_>>();
+    let query_chars = query.chars().collect::<Vec<_>>();
+    let mut query_index = 0usize;
+    let mut total_score = 0i64;
+    let mut previous_match_index = None;
+
+    for (candidate_index, candidate_char) in candidate_chars.iter().enumerate() {
+        if query_index >= query_chars.len() {
+            break;
+        }
+
+        if *candidate_char != query_chars[query_index] {
+            continue;
+        }
+
+        total_score += 16;
+        total_score -= candidate_index as i64;
+
+        if previous_match_index
+            .map(|value| value + 1 == candidate_index)
+            .unwrap_or(false)
+        {
+            total_score += 28;
+        }
+
+        if candidate_index == 0
+            || matches!(
+                candidate_chars[candidate_index.saturating_sub(1)],
+                '/' | '_' | '-' | '.' | ' '
+            )
+        {
+            total_score += 22;
+        }
+
+        previous_match_index = Some(candidate_index);
+        query_index += 1;
+    }
+
+    if query_index == query_chars.len() {
+        Some(total_score)
+    } else {
+        None
+    }
 }

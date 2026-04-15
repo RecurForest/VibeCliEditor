@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { RefreshCw, SquareTerminal } from "lucide-react";
 import { FileTreeItem } from "./FileTreeItem";
 import type { ContextMenuState, FileNode } from "../../types";
@@ -39,6 +40,28 @@ export function FileTree({
   rootPath,
   selectedPaths,
 }: FileTreeProps) {
+  const treeRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const selectedPath = selectedPaths[0];
+    if (!selectedPath || !treeRef.current) {
+      return;
+    }
+
+    const escapedPath =
+      typeof window.CSS?.escape === "function"
+        ? window.CSS.escape(selectedPath)
+        : selectedPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+    const target = treeRef.current.querySelector<HTMLButtonElement>(
+      `.explorer-tree__row[data-path="${escapedPath}"]`,
+    );
+
+    target?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [rootNode, selectedPaths]);
+
   return (
     <aside className="explorer">
       <div className="explorer__header">
@@ -75,7 +98,7 @@ export function FileTree({
         ) : null}
 
         {rootNode ? (
-          <div className="explorer-tree">
+          <div className="explorer-tree" ref={treeRef}>
             <FileTreeItem
               activeFilePath={activeFilePath}
               depth={0}
