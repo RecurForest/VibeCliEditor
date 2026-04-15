@@ -6,16 +6,18 @@ import {
   FileText,
   X,
 } from "lucide-react";
-import { useRef } from "react";
-import type { ChangeEvent, UIEvent } from "react";
+import Editor, { type OnMount } from "@monaco-editor/react";
+import { useEffect, useMemo, useRef } from "react";
+import type { editor, IDisposable } from "monaco-editor";
 import type { EditorTab } from "../../types";
+import { MONACO_THEME, resolveEditorLanguage } from "./monaco";
 
 interface EditorPaneProps {
   activeTab: EditorTab | null;
   error: string | null;
   onCloseTab: (absPath: string) => void;
   onContentChange: (content: string) => void;
-  onCursorChange: (content: string, selectionStart: number) => void;
+  onCursorChange: (line: number, column: number) => void;
   onSelectTab: (absPath: string) => void;
   tabs: EditorTab[];
 }
@@ -29,22 +31,76 @@ export function EditorPane({
   onSelectTab,
   tabs,
 }: EditorPaneProps) {
-  const lineNumberRef = useRef<HTMLDivElement | null>(null);
-  const activeContent = activeTab?.content ?? "";
-  const lineCount = Math.max(1, activeContent.split("\n").length);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const cursorListenerRef = useRef<IDisposable | null>(null);
   const breadcrumbs = activeTab?.relPath.split(/[\\/]/).filter(Boolean) ?? [];
+  const language = useMemo(() => resolveEditorLanguage(activeTab?.name), [activeTab?.name]);
 
-  function handleChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    const nextContent = event.currentTarget.value;
-    onContentChange(nextContent);
-    onCursorChange(nextContent, event.currentTarget.selectionStart);
-  }
+  const editorOptions = useMemo<editor.IStandaloneEditorConstructionOptions>(
+    () => ({
+      automaticLayout: true,
+      bracketPairColorization: { enabled: true },
+      contextmenu: true,
+      cursorBlinking: "blink",
+      fontFamily: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
+      fontSize: 13,
+      glyphMargin: false,
+      lineHeight: 22,
+      minimap: { enabled: false },
+      overviewRulerBorder: false,
+      padding: { bottom: 12, top: 12 },
+      renderLineHighlight: "line",
+      roundedSelection: false,
+      scrollBeyondLastLine: false,
+      scrollbar: {
+        alwaysConsumeMouseWheel: false,
+        horizontalScrollbarSize: 8,
+        verticalScrollbarSize: 8,
+      },
+      smoothScrolling: true,
+      tabSize: 2,
+      wordWrap: "off",
+    }),
+    [],
+  );
 
-  function handleScroll(event: UIEvent<HTMLTextAreaElement>) {
-    if (lineNumberRef.current) {
-      lineNumberRef.current.scrollTop = event.currentTarget.scrollTop;
+  const handleEditorMount: OnMount = (mountedEditor) => {
+    editorRef.current = mountedEditor;
+
+    cursorListenerRef.current?.dispose();
+    cursorListenerRef.current = mountedEditor.onDidChangeCursorPosition((event) => {
+      onCursorChange(event.position.lineNumber, event.position.column);
+    });
+
+    const position = mountedEditor.getPosition();
+    if (position) {
+      onCursorChange(position.lineNumber, position.column);
     }
-  }
+  };
+
+  useEffect(
+    () => () => {
+      cursorListenerRef.current?.dispose();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!activeTab) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const position = editorRef.current?.getPosition();
+      if (position) {
+        onCursorChange(position.lineNumber, position.column);
+      } else {
+        onCursorChange(1, 1);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, onCursorChange]);
 
   return (
     <section className="editor">
@@ -94,29 +150,16 @@ export function EditorPane({
 
       <div className="editor__surface">
         {activeTab ? (
-          <div className="editor__code">
-            <div className="editor__line-numbers" aria-hidden="true" ref={lineNumberRef}>
-              {Array.from({ length: lineCount }).map((_, index) => (
-                <div className="editor__line-number" key={index + 1}>
-                  {index + 1}
-                </div>
-              ))}
-            </div>
-
-            <textarea
-              className="editor__textarea"
-              onChange={handleChange}
-              onClick={(event) =>
-                onCursorChange(event.currentTarget.value, event.currentTarget.selectionStart)
-              }
-              onKeyUp={(event) =>
-                onCursorChange(event.currentTarget.value, event.currentTarget.selectionStart)
-              }
-              onScroll={handleScroll}
-              spellCheck={false}
-              value={activeContent}
-            />
-          </div>
+          <Editor
+            className="editor__monaco"
+            language={language}
+            onChange={(value) => onContentChange(value ?? "")}
+            onMount={handleEditorMount}
+            options={editorOptions}
+            path={activeTab.absPath}
+            theme={MONACO_THEME}
+            value={activeTab.content}
+          />
         ) : (
           <div className="editor__empty">
             <div className="editor__empty-title">No file selected</div>

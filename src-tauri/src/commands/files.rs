@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::models::file_node::FileNode;
 use crate::services::file_tree;
@@ -36,6 +39,30 @@ pub fn write_file(root_path: String, file_path: String, content: String) -> Resu
     file_tree::write_file(&root, &file, content)
 }
 
+#[tauri::command]
+pub fn get_git_branch(root_path: String) -> Result<String, String> {
+    let root = PathBuf::from(root_path);
+    let resolved_root = std::fs::canonicalize(&root).unwrap_or(root);
+
+    if let Some(branch) = run_git_command(&resolved_root, &["branch", "--show-current"]) {
+        if !branch.is_empty() {
+            return Ok(branch);
+        }
+    }
+
+    if let Some(branch) = run_git_command(&resolved_root, &["rev-parse", "--abbrev-ref", "HEAD"]) {
+        if branch.eq_ignore_ascii_case("head") {
+            return Ok(String::from("Detached"));
+        }
+
+        if !branch.is_empty() {
+            return Ok(branch);
+        }
+    }
+
+    Ok(String::new())
+}
+
 fn resolve_default_root() -> Result<PathBuf, String> {
     if let Ok(project_root) = std::env::var("JTERMINAL_PROJECT_ROOT") {
         return std::fs::canonicalize(project_root).map_err(|error| error.to_string());
@@ -61,4 +88,19 @@ fn resolve_default_root() -> Result<PathBuf, String> {
     }
 
     Ok(current_dir)
+}
+
+fn run_git_command(root: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

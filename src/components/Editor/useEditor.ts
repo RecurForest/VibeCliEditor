@@ -123,14 +123,10 @@ export function useEditor({ rootPath }: UseEditorOptions) {
     });
   }
 
-  function setCursorFromSelection(content: string, selectionStart: number) {
-    const before = content.slice(0, selectionStart);
-    const lines = before.split("\n");
-    const lastLine = lines[lines.length - 1] ?? "";
-
+  function setCursorPosition(line: number, column: number) {
     setCursor({
-      column: lastLine.length + 1,
-      line: lines.length,
+      column,
+      line,
     });
   }
 
@@ -146,7 +142,7 @@ export function useEditor({ rootPath }: UseEditorOptions) {
     openFile,
     saveActiveFile,
     setActiveTabPath,
-    setCursorFromSelection,
+    setCursorPosition,
     tabs,
     updateActiveContent,
   };

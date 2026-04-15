@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   ChevronDown,
   FolderOpen,
@@ -36,7 +37,7 @@ const RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
 const MAX_RECENT_FOLDERS = 8;
 
 function App() {
-  const [rootPath, setRootPath] = useState<string | null>(null);
+  const [rootPath, setRootPath] = useState<string | null>(() => getInitialWorkspacePath());
   const [refreshToken, setRefreshToken] = useState(0);
   const [bootError, setBootError] = useState<string | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
@@ -92,6 +93,10 @@ function App() {
   });
 
   useEffect(() => {
+    if (rootPath) {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadDefaultRoot() {
@@ -112,7 +117,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [rootPath]);
 
   useEffect(() => {
     let disposed = false;
@@ -185,11 +190,33 @@ function App() {
     };
   }, []);
 
-  const openWorkspace = useCallback((nextRootPath: string) => {
-    setRootPath(nextRootPath);
-    setRefreshToken((value) => value + 1);
-    setBootError(null);
+  const openWorkspaceInNewWindow = useCallback((nextRootPath: string) => {
+    setRecentFolders((currentFolders) => {
+      const nextFolders = pushRecentFolder(currentFolders, nextRootPath);
+      if (areStringArraysEqual(currentFolders, nextFolders)) {
+        return currentFolders;
+      }
+
+      persistRecentFolders(nextFolders);
+      return nextFolders;
+    });
+
     setIsWorkspaceMenuOpen(false);
+
+    try {
+      new WebviewWindow(createWorkspaceWindowLabel(), {
+        decorations: false,
+        height: 920,
+        minHeight: 680,
+        minWidth: 1080,
+        theme: "dark",
+        title: "Jterminal",
+        url: createWorkspaceWindowUrl(nextRootPath),
+        width: 1440,
+      });
+    } catch (error) {
+      console.error("[workspace] Failed to open workspace in a new window.", error);
+    }
   }, []);
 
   const openInlineTerminal = useCallback(() => {
@@ -208,7 +235,7 @@ function App() {
     });
 
     if (typeof result === "string") {
-      openWorkspace(result);
+      openWorkspaceInNewWindow(result);
     }
   }
 
@@ -310,7 +337,7 @@ function App() {
                         <button
                           className="workspace-switcher__recent-item"
                           key={path}
-                          onClick={() => openWorkspace(path)}
+                          onClick={() => openWorkspaceInNewWindow(path)}
                           title={path}
                           type="button"
                         >
@@ -404,7 +431,7 @@ function App() {
                           error={editor.error}
                           onCloseTab={editor.closeTab}
                           onContentChange={editor.updateActiveContent}
-                          onCursorChange={editor.setCursorFromSelection}
+                          onCursorChange={editor.setCursorPosition}
                           onSelectTab={editor.setActiveTabPath}
                           tabs={editor.tabs}
                         />
@@ -426,7 +453,7 @@ function App() {
                       error={editor.error}
                       onCloseTab={editor.closeTab}
                       onContentChange={editor.updateActiveContent}
-                      onCursorChange={editor.setCursorFromSelection}
+                      onCursorChange={editor.setCursorPosition}
                       onSelectTab={editor.setActiveTabPath}
                       tabs={editor.tabs}
                     />
@@ -585,4 +612,32 @@ function getWorkspaceInitials(name: string) {
 
   const compactName = (parts[0] ?? name.replace(/[^A-Za-z0-9]/g, "")).toUpperCase();
   return compactName.slice(0, 2) || "JT";
+}
+
+function getInitialWorkspacePath() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const url = new URL(window.location.href);
+    const workspacePath = url.searchParams.get("workspace");
+    return workspacePath && workspacePath.trim().length > 0 ? workspacePath : null;
+  } catch {
+    return null;
+  }
+}
+
+function createWorkspaceWindowUrl(workspacePath: string) {
+  if (typeof window === "undefined") {
+    return `/?workspace=${encodeURIComponent(workspacePath)}`;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("workspace", workspacePath);
+  return url.toString();
+}
+
+function createWorkspaceWindowLabel() {
+  return `workspace-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }

@@ -30,7 +30,7 @@
   --tab-bg: #2d2d2d;
   --tab-active: #1e1e1e;
   --terminal-bg: #181818;
-  --status-bg: #181818;
+  --status-bg: var(--sidebar-bg);
   --danger: #f48771;
   --warning: #cca700;
   --success: #89d185;
@@ -720,6 +720,11 @@ button {
   background: var(--terminal-bg);
 }
 
+.editor__monaco {
+  height: 100%;
+  min-height: 0;
+}
+
 .editor__code {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
@@ -1015,6 +1020,7 @@ button {
   min-height: 22px;
   padding: 0 8px;
   overflow: hidden;
+  border-top: 1px solid var(--border);
   color: #ffffff;
   background: var(--status-bg);
   font-size: 11px;
