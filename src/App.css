@@ -649,6 +649,52 @@ button {
   color: var(--text-muted);
 }
 
+.explorer__empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 240px);
+  margin: 52px auto 0;
+  padding: 18px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(17, 17, 17, 0.28);
+  text-align: center;
+}
+
+.explorer__empty-title {
+  color: #f0f0f0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.explorer__empty-copy {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.explorer__empty-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 30px;
+  margin-top: 2px;
+  padding: 0 12px;
+  border: 1px solid rgba(0, 122, 204, 0.28);
+  border-radius: 999px;
+  background: rgba(0, 122, 204, 0.14);
+  color: #d7ebff;
+  cursor: pointer;
+}
+
+.explorer__empty-action:hover {
+  background: rgba(0, 122, 204, 0.22);
+}
+
 .explorer-tree {
   display: flex;
   flex-direction: column;

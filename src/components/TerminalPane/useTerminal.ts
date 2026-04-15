@@ -37,6 +37,25 @@ export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOpt
     setContainerElement(node);
   }, []);
 
+  const pasteTextIntoTerminal = useCallback(async () => {
+    if (!sessionIdRef.current || !terminalRef.current || !navigator.clipboard?.readText) {
+      return;
+    }
+
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        return;
+      }
+
+      terminalRef.current.paste(text);
+      terminalRef.current.focus();
+      setError(null);
+    } catch (reason) {
+      console.error("[terminal] Failed to read clipboard text.", reason);
+    }
+  }, []);
+
   useEffect(() => {
     if (!containerElement || terminalRef.current) {
       return;
@@ -46,6 +65,8 @@ export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOpt
       allowTransparency: true,
       convertEol: true,
       cursorBlink: true,
+      cursorStyle: "bar",
+      cursorWidth: 1,
       fontFamily: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
       fontSize: 13,
       scrollback: 5000,
@@ -75,6 +96,23 @@ export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOpt
     terminal.open(containerElement);
     fitAddon.fit();
     terminal.focus();
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") {
+        return true;
+      }
+
+      const isPasteShortcut =
+        ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "v") ||
+        (event.shiftKey && event.key === "Insert");
+
+      if (!isPasteShortcut) {
+        return true;
+      }
+
+      void pasteTextIntoTerminal();
+      event.preventDefault();
+      return false;
+    });
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -110,9 +148,28 @@ export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOpt
       });
     });
 
+    const handlePaste = (event: ClipboardEvent) => {
+      if (!sessionIdRef.current || !terminalRef.current) {
+        return;
+      }
+
+      const text = event.clipboardData?.getData("text/plain");
+      if (!text) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      terminalRef.current.paste(text);
+      terminalRef.current.focus();
+      setError(null);
+    };
+    containerElement.addEventListener("paste", handlePaste, true);
+
     return () => {
       resizeObserver.disconnect();
       disposable.dispose();
+      containerElement.removeEventListener("paste", handlePaste, true);
 
       if (sessionIdRef.current) {
         void invoke("terminal_close", { sessionId: sessionIdRef.current }).catch(() => undefined);
@@ -124,7 +181,7 @@ export function useTerminal({ launchDir, shellKind, workingDir }: UseTerminalOpt
       terminalRef.current = null;
       sessionIdRef.current = null;
     };
-  }, [containerElement]);
+  }, [containerElement, pasteTextIntoTerminal]);
 
   useEffect(() => {
     let disposed = false;

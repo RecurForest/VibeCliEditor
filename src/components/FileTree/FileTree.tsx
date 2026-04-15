@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { RefreshCw, SquareTerminal } from "lucide-react";
+import { FolderOpen, RefreshCw, SquareTerminal } from "lucide-react";
 import { FileTreeItem } from "./FileTreeItem";
 import type { ContextMenuState, FileNode } from "../../types";
 
@@ -16,6 +16,7 @@ interface FileTreeProps {
   onInsertSelection: () => Promise<void>;
   onNodeClick: (node: FileNode, additive: boolean) => void;
   onNodeContextMenu: (node: FileNode, x: number, y: number) => void;
+  onOpenFolder: () => void;
   onRefresh: () => void;
   rootNode: FileNode | null;
   rootPath: string | null;
@@ -35,6 +36,7 @@ export function FileTree({
   onInsertSelection,
   onNodeClick,
   onNodeContextMenu,
+  onOpenFolder,
   onRefresh,
   rootNode,
   rootPath,
@@ -91,10 +93,22 @@ export function FileTree({
       </div>
 
       <div className="explorer__content">
-        {error ? <div className="explorer__empty">{error}</div> : null}
         {!error && !rootNode && isLoading ? <div className="explorer__empty">Loading workspace...</div> : null}
-        {!error && !isLoading && !rootNode ? (
-          <div className="explorer__empty">Select a workspace folder to render the file tree.</div>
+        {!isLoading && !rootNode ? (
+          <div className="explorer__empty-state">
+            <div className="explorer__empty-title">
+              {error ? "Workspace unavailable" : "No workspace open"}
+            </div>
+            <div className="explorer__empty-copy">
+              {error
+                ? error
+                : "Open a folder to load the file tree and start working in this window."}
+            </div>
+            <button className="explorer__empty-action" onClick={onOpenFolder} type="button">
+              <FolderOpen size={14} />
+              Open Folder
+            </button>
+          </div>
         ) : null}
 
         {rootNode ? (

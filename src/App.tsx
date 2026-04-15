@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -38,13 +37,14 @@ const RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
 const MAX_RECENT_FOLDERS = 8;
 
 function App() {
-  const [rootPath, setRootPath] = useState<string | null>(() => getInitialWorkspacePath());
+  const [recentFolders, setRecentFolders] = useState<string[]>(() => loadRecentFolders());
+  const [rootPath, setRootPath] = useState<string | null>(() =>
+    getInitialWorkspacePath(recentFolders),
+  );
   const [refreshToken, setRefreshToken] = useState(0);
-  const [bootError, setBootError] = useState<string | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [isInlineTerminalVisible, setIsInlineTerminalVisible] = useState(false);
-  const [recentFolders, setRecentFolders] = useState<string[]>(() => loadRecentFolders());
   const shellKind: ShellKind = "cmd";
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
 
@@ -92,33 +92,6 @@ function App() {
     shellKind,
     workingDir: rootPath,
   });
-
-  useEffect(() => {
-    if (rootPath) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadDefaultRoot() {
-      try {
-        const defaultRoot = await invoke<string>("get_default_root");
-        if (!cancelled) {
-          setRootPath(defaultRoot);
-        }
-      } catch (reason) {
-        if (!cancelled) {
-          setBootError(reason instanceof Error ? reason.message : String(reason));
-        }
-      }
-    }
-
-    void loadDefaultRoot();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [rootPath]);
 
   useEffect(() => {
     let disposed = false;
@@ -191,7 +164,7 @@ function App() {
     };
   }, []);
 
-  const openWorkspaceInNewWindow = useCallback((nextRootPath: string) => {
+  const rememberRecentFolder = useCallback((nextRootPath: string) => {
     setRecentFolders((currentFolders) => {
       const nextFolders = pushRecentFolder(currentFolders, nextRootPath);
       if (areStringArraysEqual(currentFolders, nextFolders)) {
@@ -201,31 +174,47 @@ function App() {
       persistRecentFolders(nextFolders);
       return nextFolders;
     });
-
-    setIsWorkspaceMenuOpen(false);
-
-    try {
-      new WebviewWindow(createWorkspaceWindowLabel(), {
-        decorations: false,
-        height: 920,
-        minHeight: 680,
-        minWidth: 1080,
-        theme: "dark",
-        title: "Jterminal",
-        url: createWorkspaceWindowUrl(nextRootPath),
-        width: 1440,
-      });
-    } catch (error) {
-      console.error("[workspace] Failed to open workspace in a new window.", error);
-    }
   }, []);
+
+  const openWorkspaceInCurrentWindow = useCallback(
+    (nextRootPath: string) => {
+      rememberRecentFolder(nextRootPath);
+      setRootPath(nextRootPath);
+      setIsInlineTerminalVisible(false);
+      setIsWorkspaceMenuOpen(false);
+    },
+    [rememberRecentFolder],
+  );
+
+  const openWorkspaceInNewWindow = useCallback(
+    (nextRootPath: string) => {
+      rememberRecentFolder(nextRootPath);
+      setIsWorkspaceMenuOpen(false);
+
+      try {
+        new WebviewWindow(createWorkspaceWindowLabel(), {
+          decorations: false,
+          height: 920,
+          minHeight: 680,
+          minWidth: 1080,
+          theme: "dark",
+          title: "Jterminal",
+          url: createWorkspaceWindowUrl(nextRootPath),
+          width: 1440,
+        });
+      } catch (error) {
+        console.error("[workspace] Failed to open workspace in a new window.", error);
+      }
+    },
+    [rememberRecentFolder],
+  );
 
   const openInlineTerminal = useCallback(() => {
     setIsInlineTerminalVisible(true);
     setIsWorkspaceMenuOpen(false);
   }, []);
 
-  async function handlePickDirectory() {
+  async function handlePickDirectory(target: "current" | "newWindow" = rootPath ? "newWindow" : "current") {
     setIsWorkspaceMenuOpen(false);
 
     const result = await open({
@@ -236,7 +225,11 @@ function App() {
     });
 
     if (typeof result === "string") {
-      openWorkspaceInNewWindow(result);
+      if (target === "current") {
+        openWorkspaceInCurrentWindow(result);
+      } else {
+        openWorkspaceInNewWindow(result);
+      }
     }
   }
 
@@ -418,6 +411,7 @@ function App() {
               onInsertSelection={fileTree.insertSelection}
               onNodeClick={fileTree.handleNodeClick}
               onNodeContextMenu={fileTree.handleNodeContextMenu}
+              onOpenFolder={() => void handlePickDirectory("current")}
               onRefresh={() => setRefreshToken((value) => value + 1)}
               rootNode={fileTree.rootNode}
               rootPath={rootPath}
@@ -429,8 +423,6 @@ function App() {
 
           <Panel defaultSize={80} minSize={36}>
             <section className="workbench">
-              {bootError ? <div className="ide__error">{bootError}</div> : null}
-
               <PanelGroup className="workbench__content" direction="horizontal">
                 <Panel defaultSize={66} minSize={40}>
                   {isInlineTerminalVisible ? (
@@ -636,7 +628,7 @@ function createFileNodeFromSearchResult(result: FileSearchResult): FileNode {
   };
 }
 
-function getInitialWorkspacePath() {
+function getInitialWorkspacePath(recentFolders: string[]) {
   if (typeof window === "undefined") {
     return null;
   }
@@ -644,10 +636,14 @@ function getInitialWorkspacePath() {
   try {
     const url = new URL(window.location.href);
     const workspacePath = url.searchParams.get("workspace");
-    return workspacePath && workspacePath.trim().length > 0 ? workspacePath : null;
+    if (workspacePath && workspacePath.trim().length > 0) {
+      return workspacePath;
+    }
   } catch {
-    return null;
+    return recentFolders[0] ?? null;
   }
+
+  return recentFolders[0] ?? null;
 }
 
 function createWorkspaceWindowUrl(workspacePath: string) {

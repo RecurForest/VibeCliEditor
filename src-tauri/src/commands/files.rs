@@ -3,10 +3,16 @@ use std::{
     process::Command,
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use crate::models::file_node::FileNode;
 use crate::models::file_search_result::FileSearchResult;
 use crate::services::file_tree;
 use crate::services::paths::path_to_string;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[tauri::command]
 pub fn get_default_root() -> Result<String, String> {
@@ -98,12 +104,13 @@ fn resolve_default_root() -> Result<PathBuf, String> {
 }
 
 fn run_git_command(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .ok()?;
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(args);
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().ok()?;
 
     if !output.status.success() {
         return None;

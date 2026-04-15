@@ -77,11 +77,18 @@ pub fn search_files(root: &Path, query: &str, limit: usize) -> Result<Vec<FileSe
 
 fn build_node(root: &Path, path: &Path, include_children: bool) -> Result<FileNode, String> {
     let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
-    let has_children = metadata.is_dir() && directory_has_children(path)?;
     let children = if include_children && metadata.is_dir() {
         Some(list_children(root, path)?)
     } else {
         None
+    };
+    let has_children = if metadata.is_dir() {
+        children
+            .as_ref()
+            .map(|entries| !entries.is_empty())
+            .unwrap_or(true)
+    } else {
+        false
     };
 
     Ok(FileNode {
@@ -116,19 +123,6 @@ fn list_children(root: &Path, dir: &Path) -> Result<Vec<FileNode>, String> {
     nodes.sort_by(compare_nodes);
 
     Ok(nodes)
-}
-
-fn directory_has_children(path: &Path) -> Result<bool, String> {
-    let entries = fs::read_dir(path).map_err(|error| error.to_string())?;
-
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if !is_hidden(&entry.path()) {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
 }
 
 fn compare_nodes(left: &FileNode, right: &FileNode) -> Ordering {

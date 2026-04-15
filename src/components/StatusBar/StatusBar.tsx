@@ -38,10 +38,6 @@ export function StatusBar({ activeTab, cursor, rootPath, shellKind }: StatusBarP
 
     void loadGitBranch();
 
-    const intervalId = window.setInterval(() => {
-      void loadGitBranch();
-    }, 5000);
-
     const handleWindowFocus = () => {
       void loadGitBranch();
     };
@@ -57,7 +53,6 @@ export function StatusBar({ activeTab, cursor, rootPath, shellKind }: StatusBarP
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
