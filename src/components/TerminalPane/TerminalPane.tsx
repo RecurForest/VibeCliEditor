@@ -1,22 +1,19 @@
 import "@xterm/xterm/css/xterm.css";
 import { Plus, Trash2, X } from "lucide-react";
 import type { Ref } from "react";
-import type { ShellKind } from "../../types";
 
 interface TerminalPaneProps {
   canLaunch: boolean;
   containerRef: Ref<HTMLDivElement>;
   error: string | null;
   isSessionActive: boolean;
+  onClaude: () => void;
   onClear: () => void;
   onClose: () => void;
+  onCodex: () => void;
   onFocus: () => void;
-  onLaunchClaude: () => void;
-  onLaunchCodex: () => void;
-  onOpenShell: () => void;
+  onOpen: () => void;
   sessionId: string | null;
-  shellKind: ShellKind;
-  status: "idle" | "starting" | "ready" | "error";
   workingDir: string | null;
 }
 
@@ -25,15 +22,13 @@ export function TerminalPane({
   containerRef,
   error,
   isSessionActive,
+  onClaude,
   onClear,
   onClose,
+  onCodex,
   onFocus,
-  onLaunchClaude,
-  onLaunchCodex,
-  onOpenShell,
+  onOpen,
   sessionId,
-  shellKind,
-  status,
   workingDir,
 }: TerminalPaneProps) {
   const emptyState = !workingDir ? (
@@ -47,8 +42,7 @@ export function TerminalPane({
     <div className="terminal__empty-card">
       <div className="terminal__empty-title">Terminal not started</div>
       <div className="terminal__empty-copy">
-        Use <strong>Codex</strong>, <strong>Claude Code</strong>, or the <strong>+</strong> button above to
-        launch a shell in the current workspace.
+        Use the terminal toolbar here to open a shell, Codex, or Claude Code in the current workspace.
       </div>
     </div>
   ) : null;
@@ -60,15 +54,28 @@ export function TerminalPane({
           <span className="terminal__tab" data-active="true">
             TERMINAL
           </span>
-          <span className="terminal__tab">OUTPUT</span>
-          <span className="terminal__tab">DEBUG CONSOLE</span>
         </div>
-
         <div className="terminal__actions">
+          <button
+            className="terminal__toolbar-button"
+            disabled={!canLaunch}
+            onClick={onCodex}
+            type="button"
+          >
+            Codex
+          </button>
+          <button
+            className="terminal__toolbar-button"
+            disabled={!canLaunch}
+            onClick={onClaude}
+            type="button"
+          >
+            Claude
+          </button>
           <button
             className="terminal__icon-button"
             disabled={!canLaunch}
-            onClick={onOpenShell}
+            onClick={onOpen}
             title="Open shell"
             type="button"
           >
@@ -94,35 +101,6 @@ export function TerminalPane({
           </button>
         </div>
       </header>
-
-      <div className="terminal__meta">
-        <span>{shellKind}</span>
-        <span>{status}</span>
-        <span>{sessionId ? "attached" : "detached"}</span>
-      </div>
-
-      <div className="terminal__cwd" title={workingDir ?? "No workspace selected"}>
-        {workingDir ?? "No workspace selected"}
-      </div>
-
-      <div className="terminal__launchers">
-        <button
-          className="terminal__launcher-button"
-          disabled={!canLaunch}
-          onClick={onLaunchCodex}
-          type="button"
-        >
-          Codex
-        </button>
-        <button
-          className="terminal__launcher-button"
-          disabled={!canLaunch}
-          onClick={onLaunchClaude}
-          type="button"
-        >
-          Claude Code
-        </button>
-      </div>
 
       <div className="terminal__body">
         <div className="terminal__viewport" onMouseDown={onFocus} ref={containerRef} />

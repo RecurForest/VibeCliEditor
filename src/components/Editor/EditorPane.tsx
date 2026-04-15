@@ -4,7 +4,6 @@ import {
   FileCode2,
   FileJson2,
   FileText,
-  Save,
   X,
 } from "lucide-react";
 import { useRef } from "react";
@@ -15,11 +14,9 @@ interface EditorPaneProps {
   activeTab: EditorTab | null;
   cursor: CursorPosition;
   error: string | null;
-  isSaving: boolean;
   onCloseTab: (absPath: string) => void;
   onContentChange: (content: string) => void;
   onCursorChange: (content: string, selectionStart: number) => void;
-  onSave: () => Promise<void>;
   onSelectTab: (absPath: string) => void;
   tabs: EditorTab[];
 }
@@ -28,11 +25,9 @@ export function EditorPane({
   activeTab,
   cursor,
   error,
-  isSaving,
   onCloseTab,
   onContentChange,
   onCursorChange,
-  onSave,
   onSelectTab,
   tabs,
 }: EditorPaneProps) {
@@ -85,11 +80,6 @@ export function EditorPane({
             );
           })}
         </div>
-
-        <button className="editor__save" onClick={() => void onSave()} type="button">
-          <Save size={14} />
-          {isSaving ? "Saving" : "Save"}
-        </button>
       </header>
 
       <div className="editor__breadcrumbs">

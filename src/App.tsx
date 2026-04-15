@@ -1,7 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  FolderOpen,
+  Maximize2,
+  Minimize2,
+  Minus,
+  SquareTerminal,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { useEditor } from "./components/Editor/useEditor";
@@ -13,11 +21,14 @@ import { useTerminal } from "./components/TerminalPane/useTerminal";
 import type { FileNode, ShellKind } from "./types";
 import "./App.css";
 
+const appWindow = getCurrentWindow();
+
 function App() {
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [shellKind, setShellKind] = useState<ShellKind>("cmd");
   const [bootError, setBootError] = useState<string | null>(null);
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const shellKind: ShellKind = "cmd";
 
   const editor = useEditor({
     rootPath,
@@ -77,6 +88,34 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlistenResize: (() => void) | undefined;
+
+    async function syncWindowState() {
+      const maximized = await appWindow.isMaximized();
+      if (!disposed) {
+        setIsWindowMaximized(maximized);
+      }
+    }
+
+    void syncWindowState();
+    void appWindow.onResized(() => {
+      void syncWindowState();
+    }).then((dispose) => {
+      if (disposed) {
+        dispose();
+      } else {
+        unlistenResize = dispose;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlistenResize?.();
+    };
+  }, []);
+
   async function handlePickDirectory() {
     const result = await open({
       defaultPath: rootPath ?? undefined,
@@ -92,8 +131,94 @@ function App() {
     }
   }
 
+  function handleTitlebarMouseDown(event: ReactMouseEvent<HTMLElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (isInteractiveTitlebarTarget(event.target)) {
+      return;
+    }
+
+    void runWindowAction("start dragging the window", () => appWindow.startDragging());
+  }
+
+  function handleTitlebarDoubleClick(event: ReactMouseEvent<HTMLElement>) {
+    if (event.button !== 0 || isInteractiveTitlebarTarget(event.target)) {
+      return;
+    }
+
+    void runWindowAction("toggle maximize", () => appWindow.toggleMaximize());
+  }
+
+  function handleWindowMinimize() {
+    void runWindowAction("minimize the window", () => appWindow.minimize());
+  }
+
+  function handleWindowToggleMaximize() {
+    void runWindowAction("toggle maximize", () => appWindow.toggleMaximize());
+  }
+
+  function handleWindowClose() {
+    void runWindowAction("close the window", () => appWindow.close());
+  }
+
   return (
     <main className="ide">
+      <header
+        className="app-titlebar"
+        onDoubleClick={handleTitlebarDoubleClick}
+        onMouseDown={handleTitlebarMouseDown}
+      >
+        <div className="app-titlebar__left">
+          <div className="app-titlebar__brand-group">
+            <SquareTerminal className="app-titlebar__brand-icon" size={16} />
+          </div>
+
+          <div className="app-titlebar__toolbar">
+            <button
+              className="titlebar-button titlebar-button--subtle"
+              onClick={() => void handlePickDirectory()}
+              type="button"
+            >
+              <FolderOpen size={14} />
+              Open
+            </button>
+          </div>
+        </div>
+
+        <div className="app-titlebar__drag-space" />
+
+        <div className="app-titlebar__right">
+          <div className="window-controls">
+            <button
+              className="window-control"
+              onClick={handleWindowMinimize}
+              title="Minimize"
+              type="button"
+            >
+              <Minus size={14} />
+            </button>
+            <button
+              className="window-control"
+              onClick={handleWindowToggleMaximize}
+              title={isWindowMaximized ? "Restore" : "Maximize"}
+              type="button"
+            >
+              {isWindowMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+            <button
+              className="window-control window-control--close"
+              onClick={handleWindowClose}
+              title="Close"
+              type="button"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      </header>
+
       <div className="ide__main">
         <PanelGroup className="ide__panels" direction="horizontal">
           <Panel defaultSize={20} minSize={14}>
@@ -110,7 +235,6 @@ function App() {
               onInsertSelection={fileTree.insertSelection}
               onNodeClick={fileTree.handleNodeClick}
               onNodeContextMenu={fileTree.handleNodeContextMenu}
-              onPickDirectory={handlePickDirectory}
               onRefresh={() => setRefreshToken((value) => value + 1)}
               rootNode={fileTree.rootNode}
               rootPath={rootPath}
@@ -122,34 +246,6 @@ function App() {
 
           <Panel defaultSize={80} minSize={36}>
             <section className="workbench">
-              <div className="workbench__titlebar">
-                <div className="workbench__title">
-                  Jterminal
-                  <span className="workbench__workspace-name">{fileTree.rootNode?.name ?? "Workspace"}</span>
-                </div>
-                <div className="workbench__controls">
-                  <button
-                    className="workbench__button"
-                    onClick={() => void handlePickDirectory()}
-                    type="button"
-                  >
-                    <FolderOpen size={14} />
-                    Open Folder
-                  </button>
-                  <label className="workbench__control">
-                    Shell
-                    <select
-                      className="workbench__select"
-                      onChange={(event) => setShellKind(event.currentTarget.value as ShellKind)}
-                      value={shellKind}
-                    >
-                      <option value="cmd">cmd.exe</option>
-                      <option value="powershell">PowerShell</option>
-                    </select>
-                  </label>
-                </div>
-              </div>
-
               {bootError ? <div className="ide__error">{bootError}</div> : null}
 
               <PanelGroup className="workbench__content" direction="horizontal">
@@ -158,11 +254,9 @@ function App() {
                     activeTab={editor.activeTab}
                     cursor={editor.cursor}
                     error={editor.error}
-                    isSaving={editor.isSaving}
                     onCloseTab={editor.closeTab}
                     onContentChange={editor.updateActiveContent}
                     onCursorChange={editor.setCursorFromSelection}
-                    onSave={editor.saveActiveFile}
                     onSelectTab={editor.setActiveTabPath}
                     tabs={editor.tabs}
                   />
@@ -173,18 +267,16 @@ function App() {
                 <Panel defaultSize={34} minSize={22}>
                   <TerminalPane
                     canLaunch={terminal.canLaunch}
-                    containerRef={terminal.containerRef}
-                    error={terminal.error}
                     isSessionActive={terminal.isSessionActive}
+                    onClaude={terminal.launchClaude}
                     onClear={terminal.clearTerminal}
                     onClose={terminal.closeTerminal}
+                    onCodex={terminal.launchCodex}
+                    containerRef={terminal.containerRef}
+                    error={terminal.error}
                     onFocus={terminal.focusTerminal}
-                    onLaunchClaude={terminal.launchClaude}
-                    onLaunchCodex={terminal.launchCodex}
-                    onOpenShell={terminal.openShell}
+                    onOpen={terminal.openShell}
                     sessionId={terminal.sessionId}
-                    shellKind={terminal.activeShellKind ?? shellKind}
-                    status={terminal.status}
                     workingDir={terminal.launchDir}
                   />
                 </Panel>
@@ -205,6 +297,22 @@ function App() {
 }
 
 export default App;
+
+function isInteractiveTitlebarTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(target.closest("button, select, input, textarea, option, [data-no-drag='true']"));
+}
+
+async function runWindowAction(label: string, action: () => Promise<void>) {
+  try {
+    await action();
+  } catch (error) {
+    console.error(`[window] Failed to ${label}.`, error);
+  }
+}
 
 function resolveTerminalLaunchDir(
   rootPath: string | null,

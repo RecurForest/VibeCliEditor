@@ -1,4 +1,4 @@
-import { FolderOpen, MoreHorizontal, RefreshCw, TerminalSquare } from "lucide-react";
+import { RefreshCw, SquareTerminal } from "lucide-react";
 import { FileTreeItem } from "./FileTreeItem";
 import type { ContextMenuState, FileNode } from "../../types";
 
@@ -15,7 +15,6 @@ interface FileTreeProps {
   onInsertSelection: () => Promise<void>;
   onNodeClick: (node: FileNode, additive: boolean) => void;
   onNodeContextMenu: (node: FileNode, x: number, y: number) => void;
-  onPickDirectory: () => Promise<void>;
   onRefresh: () => void;
   rootNode: FileNode | null;
   rootPath: string | null;
@@ -35,7 +34,6 @@ export function FileTree({
   onInsertSelection,
   onNodeClick,
   onNodeContextMenu,
-  onPickDirectory,
   onRefresh,
   rootNode,
   rootPath,
@@ -44,35 +42,29 @@ export function FileTree({
   return (
     <aside className="explorer">
       <div className="explorer__header">
-        <div>
+        <div className="explorer__header-top">
           <div className="explorer__eyebrow">Explorer</div>
-          <div className="explorer__workspace" title={rootPath ?? ""}>
-            {rootNode?.name ?? "No Folder Opened"}
+          <div className="explorer__header-actions">
+            <button
+              className="explorer__icon-button"
+              disabled={!rootPath}
+              onClick={onRefresh}
+              title="Refresh workspace"
+              type="button"
+            >
+              <RefreshCw size={14} />
+            </button>
+            <button
+              className="explorer__icon-button"
+              disabled={!selectedPaths.length}
+              onClick={() => void onInsertSelection()}
+              title="Insert selected path"
+              type="button"
+            >
+              <SquareTerminal size={14} />
+            </button>
           </div>
         </div>
-        <button className="explorer__icon-button" type="button">
-          <MoreHorizontal size={14} />
-        </button>
-      </div>
-
-      <div className="explorer__actions">
-        <button className="explorer__action" onClick={() => void onPickDirectory()} type="button">
-          <FolderOpen size={14} />
-          Open Folder
-        </button>
-        <button className="explorer__action" onClick={onRefresh} type="button">
-          <RefreshCw size={14} />
-          Refresh
-        </button>
-        <button
-          className="explorer__action"
-          disabled={!selectedPaths.length}
-          onClick={() => void onInsertSelection()}
-          type="button"
-        >
-          <TerminalSquare size={14} />
-          Insert Path
-        </button>
       </div>
 
       <div className="explorer__content">
@@ -84,20 +76,19 @@ export function FileTree({
 
         {rootNode ? (
           <div className="explorer-tree">
-            {rootNode.children?.map((node) => (
-              <FileTreeItem
-                activeFilePath={activeFilePath}
-                depth={0}
-                dirtyPaths={dirtyPaths}
-                expandedPaths={expandedPaths}
-                key={node.id}
-                loadingPaths={loadingPaths}
-                node={node}
-                onNodeClick={onNodeClick}
-                onNodeContextMenu={onNodeContextMenu}
-                selectedPaths={selectedPaths}
-              />
-            ))}
+            <FileTreeItem
+              activeFilePath={activeFilePath}
+              depth={0}
+              detailText={rootPath ?? undefined}
+              dirtyPaths={dirtyPaths}
+              expandedPaths={expandedPaths}
+              key={rootNode.id}
+              loadingPaths={loadingPaths}
+              node={rootNode}
+              onNodeClick={onNodeClick}
+              onNodeContextMenu={onNodeContextMenu}
+              selectedPaths={selectedPaths}
+            />
           </div>
         ) : null}
       </div>

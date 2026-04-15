@@ -11,6 +11,7 @@ import type { FileNode } from "../../types";
 
 interface FileTreeItemProps {
   activeFilePath: string | null;
+  detailText?: string;
   depth: number;
   dirtyPaths: string[];
   expandedPaths: string[];
@@ -23,6 +24,7 @@ interface FileTreeItemProps {
 
 export function FileTreeItem({
   activeFilePath,
+  detailText,
   depth,
   dirtyPaths,
   expandedPaths,
@@ -51,7 +53,7 @@ export function FileTreeItem({
           onNodeContextMenu(node, event.clientX, event.clientY);
         }}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
-        title={node.relPath}
+        title={detailText ?? node.relPath}
         type="button"
       >
         <span className="explorer-tree__chevron">
@@ -82,7 +84,12 @@ export function FileTreeItem({
           )}
         </span>
 
-        <span className="explorer-tree__label">{node.name}</span>
+        <span
+          className={`explorer-tree__content${detailText ? " explorer-tree__content--with-detail" : ""}`}
+        >
+          <span className="explorer-tree__label">{node.name}</span>
+          {detailText ? <span className="explorer-tree__detail">{detailText}</span> : null}
+        </span>
 
         {isLoading ? <span className="explorer-tree__badge">...</span> : null}
         {isDirty ? <span className="explorer-tree__badge explorer-tree__badge--dirty">M</span> : null}

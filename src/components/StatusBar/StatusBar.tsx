@@ -1,4 +1,4 @@
-import { AlertCircle, Bell, Code2, GitBranch, TriangleAlert } from "lucide-react";
+import { AlertCircle, Code2, GitBranch, TriangleAlert } from "lucide-react";
 import type { CursorPosition, EditorTab, ShellKind } from "../../types";
 
 interface StatusBarProps {
@@ -39,9 +39,6 @@ export function StatusBar({ activeTab, cursor, rootPath, shellKind }: StatusBarP
         <span className="status-bar__item">{shellKind}</span>
         <span className="status-bar__item" title={rootPath ?? ""}>
           {rootPath ?? "No workspace"}
-        </span>
-        <span className="status-bar__item">
-          <Bell size={12} />
         </span>
       </div>
     </footer>
