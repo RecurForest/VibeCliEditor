@@ -1,38 +1,50 @@
 # Jterminal
 
+English | [简体中文](./README.zh-CN.md)
+
 <p align="center">
   <img src="src/assets/jterminal.png" alt="Jterminal logo" width="96" />
 </p>
 
 <p align="center">
-  A desktop workspace built with Tauri 2, React 19, TypeScript and Rust.
+  <strong>Jterminal exists to solve a very specific terminal-first vibe coding pain point:</strong>
+  when using <code>codex</code> or <code>claude</code>, it is awkward to repeatedly bring project files into the prompt/input flow from a plain terminal.
 </p>
 
 <p align="center">
-  Jterminal 将文件树、Monaco 编辑器、集成终端和 AI CLI 入口整合到一个桌面窗口中，目标是提供一个轻量、直接、适合本地工程工作的开发工作台。
+  Jterminal combines the file tree, editor, integrated terminal, and AI CLI entry points into one desktop workspace so you can browse files, select targets, and insert file paths into the terminal workflow without constantly switching contexts.
 </p>
+
+<p align="center">
+  <img src="public/jterminal-snapshot.png" alt="Jterminal snapshot" width="100%" />
+</p>
+
+> Core intent: make it much easier to reference project files during `codex` / `claude` terminal sessions, especially when you need to continuously pull files into an AI-driven development loop.
+
+## Why It Exists
+
+In a normal terminal workflow, AI CLI tools are strong at generating and editing code, but weak at one repetitive interaction:
+
+- finding the right files in a project
+- deciding which file or directory should be referenced next
+- quickly feeding those paths back into the terminal prompt
+
+Jterminal is built around that gap. The left-side Explorer and workspace search help you find files quickly, and the terminal integration lets you insert the selected paths into the active terminal session with much less friction.
 
 ## Features
 
-- 自定义桌面工作台界面，包含标题栏、文件树、编辑区、终端区和状态栏
-- 基于 Monaco Editor 的代码编辑体验，支持常见代码文件语言识别
-- 工作区文件树支持懒加载、展开收起、右键菜单和多选
-- 顶部工作区文件搜索，支持模糊搜索并定位到左侧文件树后直接打开
-- 多标签编辑，支持脏状态提示和 `Ctrl/Cmd + S` 保存
-- 右侧终端与底部内联终端，默认基于 `cmd` 工作
-- 可从终端入口快速启动本地 AI CLI，例如 `codex` 和 `claude`
-- 左下角显示当前真实 Git 分支
-- 工作区切换支持最近目录，并以新窗口方式打开新的项目目录
+- Desktop workspace built with Tauri 2, React 19, TypeScript, and Rust
+- File tree Explorer with lazy loading, selection, refresh, and context actions
+- Monaco-based code editor for common source file types
+- Integrated terminal powered by `xterm.js` and `portable-pty`
+- Quick launch entry points for local AI CLIs such as `codex` and `claude`
+- Workspace file search from the title bar
+- File-path insertion flow designed for terminal-first AI coding
+- Recent workspace switching and multi-window project opening
 
 ## Preview
 
-当前项目更接近一个持续迭代中的桌面 IDE 风格原型，重点放在本地工作流整合而不是完整 IDE 功能覆盖。
-
-如果你准备将它发布到 GitHub，建议后续补充：
-
-- 应用截图或演示 GIF
-- LICENSE 文件
-- issue / pull request 模板
+The current project is closer to a focused desktop coding workspace than a full IDE. The emphasis is on local workflow efficiency, especially around terminal-driven AI development.
 
 ## Tech Stack
 
@@ -51,13 +63,13 @@
 
 ```text
 Jterminal/
-├─ src/                # React frontend
-├─ src-tauri/          # Tauri + Rust backend
-├─ public/             # Static assets
-├─ scripts/            # Development helper scripts
-├─ docs/               # Additional project docs
-├─ package.json
-└─ README.md
+|-- src/                # React frontend
+|-- src-tauri/          # Tauri + Rust backend
+|-- public/             # Static assets
+|-- scripts/            # Development helper scripts
+|-- docs/               # Additional project docs
+|-- package.json
+`-- README.md
 ```
 
 ## Getting Started
@@ -69,7 +81,7 @@ Jterminal/
 - Rust toolchain
 - Tauri development environment
 
-当前项目主要按 Windows 桌面环境进行开发和验证。
+The project is currently developed and validated primarily on Windows desktop.
 
 ### Install
 
@@ -83,7 +95,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-如果你只想单独运行前端开发环境：
+If you only want the frontend dev server:
 
 ```bash
 pnpm dev
@@ -98,48 +110,48 @@ pnpm tauri build
 
 ## Usage Notes
 
-- `Open Folder` 会以新窗口方式打开新的工作区，不会直接覆盖当前窗口内容
-- 顶部搜索框会在当前工作区内执行文件模糊搜索
-- Explorer 中选择文件后会在中间编辑区打开，并在状态栏显示当前文件信息
-- 终端相关快捷入口依赖本机已安装对应 CLI 命令
+- When no recent workspace exists, the app stays empty until you open a folder yourself.
+- The Explorer can be used to locate files and push selected paths into the terminal workflow.
+- The integrated terminal is intended to work well with local AI CLIs already installed on your machine.
+- The title-bar workspace switcher supports opening additional projects in new windows.
 
-如果你希望快速使用 AI CLI 入口，请确保这些命令在本机 `PATH` 中可用：
+Make sure these commands are available in your local `PATH` if you want to use the quick-launch terminal actions:
 
 - `codex`
 - `claude`
 
 ## Development Notes
 
-仓库中的 `scripts/run-tauri.mjs` 会在开发启动时做一些额外处理：
+The repository includes `scripts/run-tauri.mjs` to help normalize local Tauri execution, including:
 
-- 注入 `JTERMINAL_PROJECT_ROOT`
-- 配置独立的 Cargo target 目录
-- 在 Windows 下清理旧的开发端口占用进程
+- injecting `JTERMINAL_PROJECT_ROOT`
+- using an isolated Cargo target directory
+- reducing stale process issues on Windows
 
 ## Roadmap
 
-- 增加文件监听与自动刷新
-- 增强终端工作目录同步能力
-- 补充更多编辑器能力，例如格式化、Diff、快捷操作
-- 完善设置项、快捷键和主题配置
-- 补充测试、发布流程和开源协作规范
+- Add file watching and smarter refresh behavior
+- Improve terminal workspace synchronization
+- Expand editor capabilities such as formatting and diff workflows
+- Add settings, shortcuts, and theme customization
+- Improve packaging, testing, and release workflows
 
 ## Contributing
 
-欢迎提交 issue 或 pull request。
+Issues and pull requests are welcome.
 
-如果你准备参与开发，建议优先关注这些方向：
+Useful contribution areas:
 
-- UI/UX 细节打磨
-- 文件树与工作区交互
-- 编辑器体验增强
-- 终端能力与跨平台兼容性
+- file insertion workflow for AI terminal usage
+- Explorer and workspace interaction details
+- editor usability improvements
+- terminal behavior and cross-platform compatibility
 
 ## License
 
-当前仓库还没有附带 `LICENSE` 文件。
+This repository does not currently include a `LICENSE` file.
 
-如果你准备将项目公开到 GitHub，建议在发布前补充一个明确的开源协议，例如：
+If you plan to publish it publicly, add an explicit open-source license before release, for example:
 
 - MIT
 - Apache-2.0
