@@ -6,17 +6,20 @@ import { useTerminal } from "./useTerminal";
 interface InlineCmdTerminalProps {
   launchDir: string | null;
   onClose: () => void;
+  onSessionComplete?: () => void;
   workingDir: string | null;
 }
 
 export function InlineCmdTerminal({
   launchDir,
   onClose,
+  onSessionComplete,
   workingDir,
 }: InlineCmdTerminalProps) {
   const autoOpenKeyRef = useRef<string | null>(null);
   const terminal = useTerminal({
     launchDir,
+    onSessionComplete,
     shellKind: "cmd",
     workingDir,
   });
@@ -48,7 +51,7 @@ export function InlineCmdTerminal({
         <div className="inline-terminal__actions">
           <button
             className="terminal__icon-button"
-            disabled={!terminal.isSessionActive}
+            disabled={!terminal.selectedSession}
             onClick={terminal.clearTerminal}
             title="Clear terminal"
             type="button"

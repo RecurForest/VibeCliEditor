@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
@@ -47,6 +48,11 @@ function App() {
   const [isInlineTerminalVisible, setIsInlineTerminalVisible] = useState(false);
   const shellKind: ShellKind = "cmd";
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
+  const titlebarPointerPressedRef = useRef(false);
+
+  const refreshFileTree = useCallback(() => {
+    setRefreshToken((value) => value + 1);
+  }, []);
 
   const editor = useEditor({
     rootPath,
@@ -89,6 +95,7 @@ function App() {
 
   const terminal = useTerminal({
     launchDir: terminalLaunchDir,
+    onSessionComplete: refreshFileTree,
     shellKind,
     workingDir: rootPath,
   });
@@ -240,15 +247,61 @@ function App() {
     ]);
   }
 
+  async function handleLocateTerminalSelectionFile(selectionText: string) {
+    if (!rootPath) {
+      return;
+    }
+
+    const result = await findFileSearchResultFromTerminalSelection(rootPath, selectionText);
+    if (!result) {
+      console.warn("[terminal] No workspace file matched selection:", selectionText);
+      return;
+    }
+
+    await handleWorkspaceSearchOpen(result);
+  }
+
+  async function handleLocateActiveFile() {
+    if (!editor.activeTab) {
+      return;
+    }
+
+    await fileTree.revealPath(editor.activeTab.absPath);
+  }
+
+  async function handleOpenInFileManager(targetPath: string) {
+    try {
+      await invoke("open_in_file_manager", { targetPath });
+      fileTree.closeContextMenu();
+    } catch (error) {
+      console.error("[explorer] Failed to open target in file manager.", error);
+    }
+  }
+
   function handleTitlebarMouseDown(event: ReactMouseEvent<HTMLElement>) {
     if (event.button !== 0) {
       return;
     }
 
     if (isInteractiveTitlebarTarget(event.target)) {
+      titlebarPointerPressedRef.current = false;
       return;
     }
 
+    titlebarPointerPressedRef.current = true;
+  }
+
+  function handleTitlebarMouseMove(event: ReactMouseEvent<HTMLElement>) {
+    if (!titlebarPointerPressedRef.current || event.buttons !== 1) {
+      return;
+    }
+
+    if (isInteractiveTitlebarTarget(event.target)) {
+      titlebarPointerPressedRef.current = false;
+      return;
+    }
+
+    titlebarPointerPressedRef.current = false;
     void runWindowAction("start dragging the window", () => appWindow.startDragging());
   }
 
@@ -257,6 +310,7 @@ function App() {
       return;
     }
 
+    titlebarPointerPressedRef.current = false;
     void runWindowAction("toggle maximize", () => appWindow.toggleMaximize());
   }
 
@@ -278,6 +332,13 @@ function App() {
         className="app-titlebar"
         onDoubleClick={handleTitlebarDoubleClick}
         onMouseDown={handleTitlebarMouseDown}
+        onMouseLeave={() => {
+          titlebarPointerPressedRef.current = false;
+        }}
+        onMouseMove={handleTitlebarMouseMove}
+        onMouseUp={() => {
+          titlebarPointerPressedRef.current = false;
+        }}
       >
         <div className="app-titlebar__left">
           <div className="app-titlebar__app-icon" aria-hidden="true">
@@ -400,19 +461,20 @@ function App() {
           <Panel defaultSize={20} minSize={14}>
             <FileTree
               activeFilePath={editor.activeTab?.absPath ?? null}
+              canLocateActiveFile={Boolean(editor.activeTab)}
               contextMenu={fileTree.contextMenu}
               dirtyPaths={editor.dirtyPaths}
               error={fileTree.error}
               expandedPaths={fileTree.expandedPaths}
               isLoading={fileTree.isLoading}
               loadingPaths={fileTree.loadingPaths}
-              onCloseContextMenu={fileTree.closeContextMenu}
+              onContextOpenInFileManager={handleOpenInFileManager}
               onContextInsert={fileTree.insertContextSelection}
-              onInsertSelection={fileTree.insertSelection}
+              onLocateActiveFile={handleLocateActiveFile}
               onNodeClick={fileTree.handleNodeClick}
               onNodeContextMenu={fileTree.handleNodeContextMenu}
               onOpenFolder={() => void handlePickDirectory("current")}
-              onRefresh={() => setRefreshToken((value) => value + 1)}
+              onRefresh={refreshFileTree}
               rootNode={fileTree.rootNode}
               rootPath={rootPath}
               selectedPaths={fileTree.selectedPaths}
@@ -445,6 +507,7 @@ function App() {
                         <InlineCmdTerminal
                           launchDir={terminalLaunchDir}
                           onClose={() => setIsInlineTerminalVisible(false)}
+                          onSessionComplete={refreshFileTree}
                           workingDir={rootPath}
                         />
                       </Panel>
@@ -467,16 +530,24 @@ function App() {
                 <Panel defaultSize={34} minSize={22}>
                   <TerminalPane
                     canLaunch={terminal.canLaunch}
+                    hasSessions={terminal.hasSessions}
                     isSessionActive={terminal.isSessionActive}
                     onClaude={terminal.launchClaude}
                     onClear={terminal.clearTerminal}
                     onClose={terminal.closeTerminal}
                     onCodex={terminal.launchCodex}
+                    onCopySelection={terminal.copySelection}
                     containerRef={terminal.containerRef}
                     error={terminal.error}
                     onFocus={terminal.focusTerminal}
+                    getTerminalSelectionText={terminal.getSelectionText}
+                    onLocateSelectionFile={handleLocateTerminalSelectionFile}
                     onOpen={terminal.openShell}
-                    sessionId={terminal.sessionId}
+                    onPaste={terminal.pasteFromClipboard}
+                    onSelectSession={terminal.selectSession}
+                    selectedSession={terminal.selectedSession}
+                    selectedSessionId={terminal.selectedSessionId}
+                    sessions={terminal.sessions}
                     workingDir={terminal.launchDir}
                   />
                 </Panel>
@@ -626,6 +697,102 @@ function createFileNodeFromSearchResult(result: FileSearchResult): FileNode {
     name: result.name,
     relPath: result.relPath,
   };
+}
+
+async function findFileSearchResultFromTerminalSelection(
+  rootPath: string,
+  selectionText: string,
+) {
+  const queries = extractTerminalFileQueries(selectionText);
+
+  for (const query of queries) {
+    try {
+      const results = await invoke<FileSearchResult[]>("search_files", {
+        query,
+        rootPath,
+      });
+      const match = pickBestSearchResult(query, results);
+      if (match) {
+        return match;
+      }
+    } catch (error) {
+      console.error("[terminal] Failed to search files from selection.", error);
+    }
+  }
+
+  return null;
+}
+
+function extractTerminalFileQueries(selectionText: string) {
+  const queries = new Set<string>();
+
+  pushTerminalFileQuery(queries, selectionText);
+
+  for (const token of selectionText.match(/[^\s"'`()[\]{}<>|,]+/g) ?? []) {
+    pushTerminalFileQuery(queries, token);
+  }
+
+  return Array.from(queries);
+}
+
+function pushTerminalFileQuery(target: Set<string>, value: string) {
+  const normalized = normalizeTerminalFileQuery(value);
+  if (!normalized) {
+    return;
+  }
+
+  target.add(normalized);
+
+  const fileName = normalized.split("/").pop();
+  if (fileName && fileName !== normalized) {
+    target.add(fileName);
+  }
+}
+
+function normalizeTerminalFileQuery(value: string) {
+  let normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  normalized = normalized
+    .replace(/^file:\/\/+/i, "")
+    .replace(/^[\s"'`([{<]+/, "")
+    .replace(/[\s"'`)\]}>]+$/, "")
+    .replace(/[\\/]+/g, "/")
+    .replace(/:\d+(?::\d+)?$/, "")
+    .replace(/[.,;:]+$/, "")
+    .replace(/^\.\/+/, "");
+
+  if (!normalized || normalized === "." || normalized === "..") {
+    return null;
+  }
+
+  if (!/[/.\\-]/.test(normalized) && !/\.[A-Za-z0-9]+$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function pickBestSearchResult(query: string, results: FileSearchResult[]) {
+  if (!results.length) {
+    return null;
+  }
+
+  const normalizedQuery = normalizeComparablePath(query);
+  const fileName = normalizedQuery.split("/").pop() ?? normalizedQuery;
+
+  return (
+    results.find((result) => normalizeComparablePath(result.relPath) === normalizedQuery) ??
+    results.find((result) => normalizeComparablePath(result.absPath).endsWith(normalizedQuery)) ??
+    results.find((result) => result.name.toLowerCase() === fileName.toLowerCase()) ??
+    results[0]
+  );
+}
+
+function normalizeComparablePath(value: string) {
+  return value.replace(/[\\/]+/g, "/").toLowerCase();
 }
 
 function getInitialWorkspacePath(recentFolders: string[]) {

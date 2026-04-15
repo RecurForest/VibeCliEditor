@@ -1,15 +1,16 @@
 import {
   ChevronRight,
   Circle,
-  FileCode2,
-  FileJson2,
-  FileText,
+  Eye,
+  SquarePen,
   X,
 } from "lucide-react";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useEffect, useMemo, useRef, type WheelEvent as ReactWheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from "react";
 import type { editor, IDisposable } from "monaco-editor";
 import type { EditorTab } from "../../types";
+import { FileIcon, isMarkdownFile } from "../FileIcon/FileIcon";
+import { renderMarkdown } from "./markdown";
 import { MONACO_THEME, resolveEditorLanguage } from "./monaco";
 
 interface EditorPaneProps {
@@ -34,8 +35,15 @@ export function EditorPane({
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const cursorListenerRef = useRef<IDisposable | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
+  const [previewByPath, setPreviewByPath] = useState<Record<string, boolean>>({});
   const breadcrumbs = activeTab?.relPath.split(/[\\/]/).filter(Boolean) ?? [];
   const language = useMemo(() => resolveEditorLanguage(activeTab?.name), [activeTab?.name]);
+  const markdownEnabled = isMarkdownFile(activeTab?.name);
+  const isPreviewMode = Boolean(activeTab && markdownEnabled && previewByPath[activeTab.absPath]);
+  const markdownHtml = useMemo(
+    () => (activeTab && isPreviewMode ? renderMarkdown(activeTab.content) : ""),
+    [activeTab, isPreviewMode],
+  );
 
   const editorOptions = useMemo<editor.IStandaloneEditorConstructionOptions>(
     () => ({
@@ -133,6 +141,17 @@ export function EditorPane({
     tabListElement.scrollLeft += delta;
   }
 
+  function togglePreviewMode() {
+    if (!activeTab || !markdownEnabled) {
+      return;
+    }
+
+    setPreviewByPath((value) => ({
+      ...value,
+      [activeTab.absPath]: !value[activeTab.absPath],
+    }));
+  }
+
   return (
     <section className="editor">
       <header className="editor__tabs">
@@ -150,7 +169,9 @@ export function EditorPane({
                 onClick={() => onSelectTab(tab.absPath)}
                 type="button"
               >
-                <span className="editor__tab-icon">{getFileIcon(tab.name)}</span>
+                <span className="editor__tab-icon">
+                  <FileIcon fileName={tab.name} size="compact" />
+                </span>
                 <span className="editor__tab-name">{tab.name}</span>
                 {isDirty ? <Circle className="editor__tab-dirty" size={8} strokeWidth={4} /> : null}
                 <X
@@ -164,6 +185,19 @@ export function EditorPane({
               </button>
             );
           })}
+        </div>
+
+        <div className="editor__tab-actions">
+          {activeTab && markdownEnabled ? (
+            <button
+              className="editor__action-button"
+              onClick={togglePreviewMode}
+              title={isPreviewMode ? "Back to editor" : "Preview Markdown"}
+              type="button"
+            >
+              {isPreviewMode ? <SquarePen size={14} /> : <Eye size={14} />}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -181,7 +215,12 @@ export function EditorPane({
       </div>
 
       <div className="editor__surface">
-        {activeTab ? (
+        {activeTab && isPreviewMode ? (
+          <article
+            className="editor__markdown"
+            dangerouslySetInnerHTML={{ __html: markdownHtml }}
+          />
+        ) : activeTab ? (
           <Editor
             className="editor__monaco"
             language={language}
@@ -205,23 +244,4 @@ export function EditorPane({
       {error ? <div className="editor__error">{error}</div> : null}
     </section>
   );
-}
-
-function getFileIcon(fileName: string) {
-  const extension = fileName.split(".").pop()?.toLowerCase();
-
-  switch (extension) {
-    case "ts":
-    case "tsx":
-    case "js":
-    case "jsx":
-    case "rs":
-    case "css":
-    case "html":
-      return <FileCode2 size={14} />;
-    case "json":
-      return <FileJson2 size={14} />;
-    default:
-      return <FileText size={14} />;
-  }
 }

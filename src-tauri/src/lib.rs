@@ -18,6 +18,7 @@ pub fn run() {
             commands::files::write_file,
             commands::files::search_files,
             commands::files::get_git_branch,
+            commands::files::open_in_file_manager,
             commands::terminal::start_terminal,
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,

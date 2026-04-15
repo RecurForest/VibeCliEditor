@@ -76,6 +76,45 @@ pub fn get_git_branch(root_path: String) -> Result<String, String> {
     Ok(String::new())
 }
 
+#[tauri::command]
+pub fn open_in_file_manager(target_path: String) -> Result<(), String> {
+    let target = std::fs::canonicalize(target_path).map_err(|error| error.to_string())?;
+    let open_target = if target.is_dir() {
+        target
+    } else {
+        target
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| String::from("Unable to resolve parent folder."))?
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("explorer.exe");
+        command.arg(&open_target);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command.spawn().map_err(|error| error.to_string())?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&open_target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(&open_target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 fn resolve_default_root() -> Result<PathBuf, String> {
     if let Ok(project_root) = std::env::var("JTERMINAL_PROJECT_ROOT") {
         return std::fs::canonicalize(project_root).map_err(|error| error.to_string());

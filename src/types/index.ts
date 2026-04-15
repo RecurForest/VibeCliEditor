@@ -26,6 +26,23 @@ export interface TerminalSessionInfo {
   workingDir: string;
 }
 
+export type TerminalSessionMode = "shell" | "codex" | "claude";
+
+export type TerminalSessionStatus = "starting" | "active" | "completed";
+
+export interface TerminalSessionRecord {
+  id: string;
+  exitCode?: number | null;
+  finishedAt?: number;
+  mode: TerminalSessionMode;
+  output: string;
+  shellKind: ShellKind;
+  startedAt: number;
+  status: TerminalSessionStatus;
+  title: string;
+  workingDir: string;
+}
+
 export interface TerminalOutputEvent {
   sessionId: string;
   data: string;

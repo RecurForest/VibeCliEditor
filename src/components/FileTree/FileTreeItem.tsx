@@ -1,13 +1,11 @@
 import {
   ChevronDown,
   ChevronRight,
-  FileCode2,
-  FileJson2,
-  FileText,
   Folder,
   FolderOpen,
 } from "lucide-react";
 import type { FileNode } from "../../types";
+import { FileIcon } from "../FileIcon/FileIcon";
 
 interface FileTreeItemProps {
   activeFilePath: string | null;
@@ -81,7 +79,7 @@ export function FileTreeItem({
               <Folder size={15} />
             )
           ) : (
-            getFileIcon(node.name)
+            <FileIcon fileName={node.name} />
           )}
         </span>
 
@@ -116,23 +114,4 @@ export function FileTreeItem({
       ) : null}
     </div>
   );
-}
-
-function getFileIcon(fileName: string) {
-  const extension = fileName.split(".").pop()?.toLowerCase();
-
-  switch (extension) {
-    case "ts":
-    case "tsx":
-    case "js":
-    case "jsx":
-    case "rs":
-    case "css":
-    case "html":
-      return <FileCode2 size={15} />;
-    case "json":
-      return <FileJson2 size={15} />;
-    default:
-      return <FileText size={15} />;
-  }
 }

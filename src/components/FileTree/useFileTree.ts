@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { ContextMenuState, FileNode } from "../../types";
 import { replaceNodeChildren } from "../../utils/tree";
 
@@ -24,12 +24,24 @@ export function useFileTree({
   const [loadingPaths, setLoadingPaths] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const isLoading = Boolean(rootPath) && rootNode === null && error === null;
+  const [isLoading, setIsLoading] = useState(false);
+
+  const previousRootPathRef = useRef<string | null>(null);
   const rootNodeRef = useRef<FileNode | null>(null);
+  const expandedPathsRef = useRef<string[]>([]);
+  const selectedPathsRef = useRef<string[]>([]);
 
   useEffect(() => {
     rootNodeRef.current = rootNode;
   }, [rootNode]);
+
+  useEffect(() => {
+    expandedPathsRef.current = expandedPaths;
+  }, [expandedPaths]);
+
+  useEffect(() => {
+    selectedPathsRef.current = selectedPaths;
+  }, [selectedPaths]);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,24 +51,64 @@ export function useFileTree({
         setRootNode(null);
         setSelectedPaths([]);
         setExpandedPaths([]);
+        setLoadingPaths([]);
         setError(null);
+        setIsLoading(false);
+        previousRootPathRef.current = null;
         return;
       }
 
-      setRootNode(null);
-      setSelectedPaths([]);
-      setExpandedPaths([rootPath]);
+      const shouldPreserveState = previousRootPathRef.current === rootPath;
+      const preservedExpandedPaths = shouldPreserveState
+        ? expandedPathsRef.current.filter((path) => isPathWithinRoot(path, rootPath))
+        : [];
+      const preservedSelectedPaths = shouldPreserveState
+        ? selectedPathsRef.current.filter((path) => isPathWithinRoot(path, rootPath))
+        : [];
+
+      if (!shouldPreserveState) {
+        setSelectedPaths([]);
+        setExpandedPaths([rootPath]);
+        setLoadingPaths([]);
+      }
+
+      setContextMenu(null);
       setError(null);
+      setIsLoading(true);
 
       try {
         const node = await invoke<FileNode>("scan_working_dir", { rootPath });
-        if (!cancelled) {
-          setRootNode(node);
-          onResolvedRootPath?.(node.absPath);
+        let nextTree = node;
+        const nextExpandedPaths = mergeUniquePaths(
+          [node.absPath],
+          preservedExpandedPaths.filter((path) => path !== node.absPath),
+        );
+
+        nextTree = await hydrateExpandedDirectories(nextTree, node.absPath, nextExpandedPaths, setLoadingPaths);
+
+        if (cancelled) {
+          return;
         }
+
+        const validExpandedPaths = nextExpandedPaths.filter(
+          (path) => path === node.absPath || Boolean(findNodeByPath(nextTree, path)),
+        );
+        const validSelectedPaths = preservedSelectedPaths.filter((path) => Boolean(findNodeByPath(nextTree, path)));
+
+        rootNodeRef.current = nextTree;
+        previousRootPathRef.current = node.absPath;
+        setRootNode(nextTree);
+        setExpandedPaths(validExpandedPaths);
+        setSelectedPaths(validSelectedPaths);
+        onResolvedRootPath?.(node.absPath);
       } catch (reason) {
         if (!cancelled) {
           setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+          setLoadingPaths([]);
         }
       }
     }
@@ -99,13 +151,13 @@ export function useFileTree({
       return;
     }
 
-    setExpandedPaths((value) => [...value, node.absPath]);
+    setExpandedPaths((value) => mergeUniquePaths(value, [node.absPath]));
 
     if (!rootPath || !node.hasChildren || node.children) {
       return;
     }
 
-    setLoadingPaths((value) => [...value, node.absPath]);
+    setLoadingPaths((value) => mergeUniquePaths(value, [node.absPath]));
 
     try {
       const children = await invoke<FileNode[]>("read_directory", {
@@ -249,6 +301,40 @@ export function useFileTree({
     selectedPaths,
     toggleDirectory,
   };
+}
+
+async function hydrateExpandedDirectories(
+  rootNode: FileNode,
+  rootPath: string,
+  expandedPaths: string[],
+  setLoadingPaths: Dispatch<SetStateAction<string[]>>,
+) {
+  let nextTree = rootNode;
+
+  for (const dirPath of [...expandedPaths].sort((left, right) => left.length - right.length)) {
+    if (dirPath === rootPath) {
+      continue;
+    }
+
+    const directoryNode = findNodeByPath(nextTree, dirPath);
+    if (!directoryNode || !directoryNode.isDir || !directoryNode.hasChildren) {
+      continue;
+    }
+
+    setLoadingPaths((value) => mergeUniquePaths(value, [dirPath]));
+
+    try {
+      const children = await invoke<FileNode[]>("read_directory", {
+        dirPath,
+        rootPath,
+      });
+      nextTree = replaceNodeChildren(nextTree, dirPath, children);
+    } finally {
+      setLoadingPaths((value) => value.filter((path) => path !== dirPath));
+    }
+  }
+
+  return nextTree;
 }
 
 function findNodeByPath(node: FileNode, targetPath: string): FileNode | null {

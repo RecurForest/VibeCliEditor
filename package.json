@@ -1,7 +1,7 @@
 {
   "name": "jterminal",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,9 @@
     "@tauri-apps/plugin-opener": "^2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "dompurify": "^3.4.0",
     "lucide-react": "^0.546.0",
+    "marked": "^18.0.0",
     "monaco-editor": "^0.55.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

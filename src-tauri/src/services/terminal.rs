@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -15,13 +15,13 @@ use crate::services::path_insert;
 use crate::services::paths::{path_for_shell, path_to_string};
 
 pub struct TerminalState {
-    sessions: Mutex<HashMap<String, TerminalSession>>,
+    sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
 }
 
 impl Default for TerminalState {
     fn default() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -87,6 +87,7 @@ impl TerminalState {
         let exit_session_id = session_id.clone();
         let output_app = app.clone();
         let exit_app = app;
+        let sessions = Arc::clone(&self.sessions);
 
         thread::spawn(move || {
             let mut buffer = [0_u8; 8192];
@@ -107,6 +108,11 @@ impl TerminalState {
                     Err(_) => break,
                 }
             }
+
+            sessions
+                .lock()
+                .expect("terminal sessions mutex poisoned")
+                .remove(&output_session_id);
 
             let _ = exit_app.emit(
                 "terminal-exit",
