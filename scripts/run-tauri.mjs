@@ -12,7 +12,10 @@ if (!existsSync(cliEntry)) {
 }
 
 const cargoBin = join(process.env.USERPROFILE ?? "", ".cargo", "bin");
-const cargoTargetDir = join(process.env.USERPROFILE ?? projectRoot, ".cargo-target", "jterminal");
+const defaultCargoTargetDir = join(projectRoot, ".cargo-target");
+const cargoTargetDir = process.env.CARGO_TARGET_DIR
+  ? resolve(process.env.CARGO_TARGET_DIR)
+  : defaultCargoTargetDir;
 const pathEntries = (process.env.PATH ?? "").split(";");
 const env = { ...process.env };
 
@@ -54,6 +57,7 @@ function cleanupWindowsDevProcesses() {
   const script = `
 $targetExe = '${escapePowerShell(targetExe)}'
 $viteEntry = '${escapePowerShell(viteEntry)}'
+$cargoTargetDir = '${escapePowerShell(cargoTargetDir)}'
 $projectRoot = '${escapePowerShell(projectRootPath)}'
 
 $portProcesses = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
@@ -75,7 +79,12 @@ $projectProcesses = @(Get-CimInstance Win32_Process | Where-Object {
   ($_.Name -eq 'node.exe' -and (
     $_.CommandLine -like "*$viteEntry*" -or
     ($_.CommandLine -like "*$projectRoot*" -and $_.CommandLine -like "*vite*")
-  ))
+  )) -or
+  ($_.Name -in 'cargo.exe', 'rustc.exe', 'build-script-build.exe' -and (
+    $_.CommandLine -like "*$projectRoot*" -or
+    $_.CommandLine -like "*$cargoTargetDir*"
+  )) -or
+  ($_.ExecutablePath -like "$cargoTargetDir\\*" -and $_.Name -like '*.exe')
 } | Select-Object -ExpandProperty ProcessId -Unique)
 
 ($portProcesses + $projectProcesses | Sort-Object -Unique) | ForEach-Object {

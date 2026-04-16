@@ -5,9 +5,11 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   ChevronDown,
   FolderOpen,
+  GitCompareArrows,
   Maximize2,
   Minimize2,
   Minus,
+  RefreshCw,
   SquareTerminal,
   X,
 } from "lucide-react";
@@ -30,10 +32,20 @@ import { InlineCmdTerminal } from "./components/TerminalPane/InlineCmdTerminal";
 import { TerminalPane } from "./components/TerminalPane/TerminalPane";
 import { useTerminal } from "./components/TerminalPane/useTerminal";
 import { WorkspaceFileSearch } from "./components/WorkspaceSearch/WorkspaceFileSearch";
-import type { FileNode, FileSearchResult, ShellKind } from "./types";
+import type {
+  EditorTab,
+  FileNode,
+  FileSearchResult,
+  SessionDiffFile,
+  SessionDiffResult,
+  SessionDiffTab,
+  ShellKind,
+  WorkbenchTab,
+} from "./types";
 import "./App.css";
 
 const appWindow = getCurrentWindow();
+const APP_WINDOW_TITLE = "Jterminal";
 const RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
 const MAX_RECENT_FOLDERS = 8;
 
@@ -46,17 +58,20 @@ function App() {
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [isInlineTerminalVisible, setIsInlineTerminalVisible] = useState(false);
+  const [sessionDiffTab, setSessionDiffTab] = useState<SessionDiffTab | null>(null);
+  const [isSessionDiffTabActive, setIsSessionDiffTabActive] = useState(false);
   const shellKind: ShellKind = "cmd";
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
   const titlebarPointerPressedRef = useRef(false);
-
-  const refreshFileTree = useCallback(() => {
-    setRefreshToken((value) => value + 1);
-  }, []);
+  const lastAutoRefreshAtRef = useRef(0);
 
   const editor = useEditor({
     rootPath,
   });
+  const refreshWorkspace = useCallback(() => {
+    setRefreshToken((value) => value + 1);
+    void editor.reloadCleanTabsFromDisk();
+  }, [editor.reloadCleanTabsFromDisk]);
 
   const currentWorkspaceName = useMemo(() => getWorkspaceName(rootPath), [rootPath]);
   const currentWorkspaceInitials = useMemo(
@@ -66,6 +81,13 @@ function App() {
   const visibleRecentFolders = useMemo(
     () => recentFolders.filter((path) => path !== rootPath),
     [recentFolders, rootPath],
+  );
+  const openEditorFile = useCallback(
+    async (node: FileNode) => {
+      setIsSessionDiffTabActive(false);
+      await editor.openFile(node);
+    },
+    [editor],
   );
 
   const handleResolvedRootPath = useCallback((resolvedRootPath: string) => {
@@ -83,7 +105,7 @@ function App() {
 
       await terminal.insertPaths(paths, rootPath, "projectRelative");
     },
-    onOpenFile: editor.openFile,
+    onOpenFile: openEditorFile,
     refreshToken,
     rootPath,
   });
@@ -95,10 +117,75 @@ function App() {
 
   const terminal = useTerminal({
     launchDir: terminalLaunchDir,
-    onSessionComplete: refreshFileTree,
+    onSessionComplete: refreshWorkspace,
     shellKind,
     workingDir: rootPath,
   });
+  const refreshSessionDiffTab = useCallback(
+    async (sessionId: string) => {
+      const refreshedResult = await terminal.loadSessionDiff(sessionId);
+      setSessionDiffTab((currentTab) => {
+        if (!currentTab || currentTab.result.sessionId !== sessionId) {
+          return currentTab;
+        }
+
+        const sessionTitle =
+          currentTab.sessionTitle ??
+          terminal.sessions.find((session) => session.id === sessionId)?.title ??
+          "AI Session";
+
+        return createSessionDiffTab(refreshedResult, sessionTitle);
+      });
+    },
+    [terminal],
+  );
+  const workbenchTabs = useMemo<WorkbenchTab[]>(
+    () => (sessionDiffTab ? [...editor.tabs, sessionDiffTab] : editor.tabs),
+    [editor.tabs, sessionDiffTab],
+  );
+  const activeWorkbenchTab = useMemo<WorkbenchTab | null>(
+    () => (isSessionDiffTabActive ? sessionDiffTab : editor.activeTab),
+    [editor.activeTab, isSessionDiffTabActive, sessionDiffTab],
+  );
+  const windowTitle = useMemo(
+    () => buildWindowTitle(activeWorkbenchTab?.name, currentWorkspaceName),
+    [activeWorkbenchTab?.name, currentWorkspaceName],
+  );
+  const refreshActiveWorkbenchTab = useCallback(async () => {
+    if (isSessionDiffTabActive) {
+      if (!sessionDiffTab) {
+        return;
+      }
+
+      await refreshSessionDiffTab(sessionDiffTab.result.sessionId);
+      return;
+    }
+
+    if (!editor.activeTab) {
+      return;
+    }
+
+    await editor.reloadActiveTabFromDisk({
+      closeMissing: true,
+      onlyClean: true,
+    });
+  }, [
+    editor.activeTab,
+    editor.reloadActiveTabFromDisk,
+    isSessionDiffTabActive,
+    refreshSessionDiffTab,
+    sessionDiffTab,
+  ]);
+
+  const triggerAutoRefreshActiveEditorTab = useCallback(() => {
+    const now = Date.now();
+    if (now - lastAutoRefreshAtRef.current < 250) {
+      return;
+    }
+
+    lastAutoRefreshAtRef.current = now;
+    void refreshActiveWorkbenchTab();
+  }, [refreshActiveWorkbenchTab]);
 
   useEffect(() => {
     let disposed = false;
@@ -145,6 +232,32 @@ function App() {
   }, [rootPath]);
 
   useEffect(() => {
+    document.title = windowTitle;
+    void appWindow.setTitle(windowTitle).catch((error) => {
+      console.error("[window] Failed to sync window title.", error);
+    });
+  }, [windowTitle]);
+
+  useEffect(() => {
+    setSessionDiffTab(null);
+    setIsSessionDiffTabActive(false);
+  }, [rootPath]);
+
+  useEffect(() => {
+    if (!sessionDiffTab) {
+      return;
+    }
+
+    const hasActiveSession = terminal.sessions.some(
+      (session) => session.id === sessionDiffTab.result.sessionId,
+    );
+    if (!hasActiveSession) {
+      setSessionDiffTab(null);
+      setIsSessionDiffTabActive(false);
+    }
+  }, [sessionDiffTab, terminal.sessions]);
+
+  useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
       if (!(target instanceof Node)) {
@@ -170,6 +283,28 @@ function App() {
       window.removeEventListener("keydown", handleKeydown);
     };
   }, []);
+
+  useEffect(() => {
+    function handleWindowFocus() {
+      triggerAutoRefreshActiveEditorTab();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      triggerAutoRefreshActiveEditorTab();
+    }
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [triggerAutoRefreshActiveEditorTab]);
 
   const rememberRecentFolder = useCallback((nextRootPath: string) => {
     setRecentFolders((currentFolders) => {
@@ -205,7 +340,7 @@ function App() {
           minHeight: 680,
           minWidth: 1080,
           theme: "dark",
-          title: "Jterminal",
+          title: buildWindowTitle(null, getWorkspaceName(nextRootPath)),
           url: createWorkspaceWindowUrl(nextRootPath),
           width: 1440,
         });
@@ -243,7 +378,7 @@ function App() {
   async function handleWorkspaceSearchOpen(result: FileSearchResult) {
     await Promise.all([
       fileTree.revealPath(result.absPath),
-      editor.openFile(createFileNodeFromSearchResult(result)),
+      openEditorFile(createFileNodeFromSearchResult(result)),
     ]);
   }
 
@@ -325,6 +460,137 @@ function App() {
   function handleWindowClose() {
     void runWindowAction("close the window", () => appWindow.close());
   }
+
+  async function handleOpenSessionDiff() {
+    try {
+      await editor.saveDirtyTabs();
+      const result = await terminal.viewSelectedSessionDiff();
+      const sessionTitle =
+        terminal.sessions.find((session) => session.id === result.sessionId)?.title ?? "AI Session";
+
+      setSessionDiffTab(createSessionDiffTab(result, sessionTitle));
+      setIsSessionDiffTabActive(true);
+    } catch (error) {
+      console.error("[diff] Failed to load session diff.", error);
+    }
+  }
+
+  const handleRebuildSessionDiffBaseline = useCallback(async () => {
+    const sessionId = terminal.selectedSession?.id;
+    await editor.saveDirtyTabs();
+    await terminal.rebuildSelectedSessionDiffBaseline();
+
+    if (sessionId && sessionDiffTab?.result.sessionId === sessionId) {
+      await refreshSessionDiffTab(sessionId);
+    }
+  }, [editor, refreshSessionDiffTab, sessionDiffTab, terminal]);
+
+  const handleViewSessionDiffFiles = useCallback(async () => {
+    try {
+      await editor.saveDirtyTabs();
+      const result = await terminal.viewSelectedSessionDiff();
+      if (!result.files.length) {
+        return;
+      }
+
+      const targets = result.files.map((file) => createSessionDiffOpenTarget(file));
+      setIsSessionDiffTabActive(false);
+
+      for (const target of targets) {
+        if (target.type === "disk") {
+          await editor.openFile(target.node);
+        } else {
+          editor.openVirtualFile(target.tab);
+        }
+      }
+
+      const firstTarget = targets[0];
+      if (!firstTarget) {
+        return;
+      }
+
+      const firstPath =
+        firstTarget.type === "disk" ? firstTarget.node.absPath : firstTarget.tab.absPath;
+      await editor.activateTab(firstPath);
+    } catch (error) {
+      console.error("[diff] Failed to open changed files in the content area.", error);
+    }
+  }, [editor, terminal]);
+
+  const handleSessionDiffFilesReverted = useCallback(
+    async ({ paths, sessionId }: { paths: string[]; sessionId: string }) => {
+      setRefreshToken((value) => value + 1);
+      await editor.reloadPathsFromDisk(paths, { closeMissing: true });
+
+      await refreshSessionDiffTab(sessionId);
+    },
+    [editor.reloadPathsFromDisk, refreshSessionDiffTab],
+  );
+
+  function handleSelectWorkbenchTab(tabId: string) {
+    if (sessionDiffTab && tabId === sessionDiffTab.id) {
+      setIsSessionDiffTabActive(true);
+      void (async () => {
+        try {
+          await editor.saveDirtyTabs();
+          await refreshSessionDiffTab(sessionDiffTab.result.sessionId);
+        } catch (error) {
+          console.error("[diff] Failed to refresh session diff tab.", error);
+        }
+      })();
+      return;
+    }
+
+    setIsSessionDiffTabActive(false);
+    void editor.activateTab(tabId, { syncFromDisk: true });
+  }
+
+  function handleCloseWorkbenchTab(tabId: string) {
+    if (sessionDiffTab && tabId === sessionDiffTab.id) {
+      setSessionDiffTab(null);
+      setIsSessionDiffTabActive(false);
+      return;
+    }
+
+    editor.closeTab(tabId);
+  }
+
+  const editorPane = (
+    <EditorPane
+      activeTab={activeWorkbenchTab}
+      error={editor.error}
+      onCloseTab={handleCloseWorkbenchTab}
+      onContentChange={editor.updateActiveContent}
+      onCursorChange={editor.setCursorPosition}
+      onFocusWithin={triggerAutoRefreshActiveEditorTab}
+      onSessionDiffFilesReverted={handleSessionDiffFilesReverted}
+      onSelectTab={handleSelectWorkbenchTab}
+      tabs={workbenchTabs}
+    />
+  );
+  const sessionDiffViewButtonState = terminal.canViewSelectedSessionDiff
+    ? "ready"
+    : terminal.selectedSessionDiffViewButtonLabel === "Loading"
+      ? "loading"
+      : terminal.selectedSessionDiffViewButtonLabel === "Preparing"
+        ? "preparing"
+        : "idle";
+  const supportsSelectedSessionDiff =
+    terminal.selectedSession?.mode === "codex" || terminal.selectedSession?.mode === "claude";
+  const sessionDiffFilesButtonTitle =
+    !terminal.isSessionDiffEnabled
+      ? "Turn on Diff tracking first."
+      : !terminal.selectedSession
+          ? "Select a Codex or Claude session first."
+        : !supportsSelectedSessionDiff
+          ? "Diff is available for Codex and Claude sessions only."
+          : sessionDiffViewButtonState === "loading"
+            ? "Loading changed files for the current baseline."
+            : sessionDiffViewButtonState === "preparing"
+              ? "Building a baseline snapshot for this AI session."
+              : terminal.selectedSessionDiffState?.error
+                ? terminal.selectedSessionDiffState.error
+                : "Open changed files in the content area.";
 
   return (
     <main className="ide">
@@ -427,6 +693,71 @@ function App() {
         </div>
 
         <div className="app-titlebar__right">
+          <div className="app-titlebar__session-actions">
+            <button
+              aria-checked={terminal.isSessionDiffEnabled}
+              className="app-titlebar__session-switch"
+              data-state={terminal.isSessionDiffEnabled ? "enabled" : "disabled"}
+              onClick={terminal.toggleSessionDiff}
+              role="switch"
+              title={terminal.sessionDiffToggleTitle}
+              type="button"
+            >
+              <span className="app-titlebar__session-switch-copy">
+                <GitCompareArrows size={13} />
+                Diff
+              </span>
+              <span className="app-titlebar__session-switch-track" aria-hidden="true">
+                <span className="app-titlebar__session-switch-thumb" />
+              </span>
+            </button>
+            <button
+              className="terminal__toolbar-button terminal__toolbar-button--diff-view"
+              data-state={sessionDiffViewButtonState}
+              disabled={!terminal.canViewSelectedSessionDiff}
+              onClick={() => void handleOpenSessionDiff()}
+              title={terminal.selectedSessionDiffViewButtonTitle}
+              type="button"
+            >
+              {terminal.selectedSessionDiffViewButtonLabel}
+            </button>
+            <button
+              className="terminal__toolbar-button terminal__toolbar-button--diff-view"
+              data-state={sessionDiffViewButtonState}
+              disabled={!terminal.canViewSelectedSessionDiff}
+              onClick={() => void handleViewSessionDiffFiles()}
+              title={sessionDiffFilesButtonTitle}
+              type="button"
+            >
+              View
+            </button>
+            <button
+              className="terminal__toolbar-button terminal__toolbar-button--baseline"
+              data-state={
+                sessionDiffViewButtonState === "preparing"
+                  ? "preparing"
+                  : !terminal.canRebuildSelectedSessionDiffBaseline
+                    ? "disabled"
+                    : terminal.selectedSessionDiffState?.error
+                      ? "error"
+                      : terminal.selectedSessionDiffState?.baselineStatus === "ready"
+                        ? "ready"
+                        : "actionable"
+              }
+              data-busy={sessionDiffViewButtonState === "preparing"}
+                    disabled={!terminal.canRebuildSelectedSessionDiffBaseline}
+                    onClick={() => {
+                      void handleRebuildSessionDiffBaseline().catch((error) => {
+                        console.error("[diff] Failed to rebuild baseline.", error);
+                      });
+                    }}
+              title={terminal.selectedSessionDiffBaselineButtonTitle}
+              type="button"
+            >
+              <RefreshCw size={12} />
+              {terminal.selectedSessionDiffBaselineButtonLabel}
+            </button>
+          </div>
           <div className="window-controls">
             <button
               className="window-control"
@@ -474,7 +805,7 @@ function App() {
               onNodeClick={fileTree.handleNodeClick}
               onNodeContextMenu={fileTree.handleNodeContextMenu}
               onOpenFolder={() => void handlePickDirectory("current")}
-              onRefresh={refreshFileTree}
+              onRefresh={refreshWorkspace}
               rootNode={fileTree.rootNode}
               rootPath={rootPath}
               selectedPaths={fileTree.selectedPaths}
@@ -490,15 +821,7 @@ function App() {
                   {isInlineTerminalVisible ? (
                     <PanelGroup className="editor-stack" direction="vertical">
                       <Panel defaultSize={70} minSize={28}>
-                        <EditorPane
-                          activeTab={editor.activeTab}
-                          error={editor.error}
-                          onCloseTab={editor.closeTab}
-                          onContentChange={editor.updateActiveContent}
-                          onCursorChange={editor.setCursorPosition}
-                          onSelectTab={editor.setActiveTabPath}
-                          tabs={editor.tabs}
-                        />
+                        {editorPane}
                       </Panel>
 
                       <PanelResizeHandle className="resize-handle resize-handle--row" />
@@ -507,21 +830,13 @@ function App() {
                         <InlineCmdTerminal
                           launchDir={terminalLaunchDir}
                           onClose={() => setIsInlineTerminalVisible(false)}
-                          onSessionComplete={refreshFileTree}
+                          onSessionComplete={refreshWorkspace}
                           workingDir={rootPath}
                         />
                       </Panel>
                     </PanelGroup>
                   ) : (
-                    <EditorPane
-                      activeTab={editor.activeTab}
-                      error={editor.error}
-                      onCloseTab={editor.closeTab}
-                      onContentChange={editor.updateActiveContent}
-                      onCursorChange={editor.setCursorPosition}
-                      onSelectTab={editor.setActiveTabPath}
-                      tabs={editor.tabs}
-                    />
+                    editorPane
                   )}
                 </Panel>
 
@@ -699,6 +1014,66 @@ function createFileNodeFromSearchResult(result: FileSearchResult): FileNode {
   };
 }
 
+function createSessionDiffOpenTarget(file: SessionDiffFile) {
+  if (!file.isBinary && !file.tooLarge && file.status !== "deleted") {
+    return {
+      node: createFileNodeFromSessionDiffFile(file),
+      type: "disk" as const,
+    };
+  }
+
+  return {
+    tab: createEditorTabFromSessionDiffFile(file),
+    type: "virtual" as const,
+  };
+}
+
+function createFileNodeFromSessionDiffFile(file: SessionDiffFile): FileNode {
+  return {
+    absPath: file.absPath,
+    children: undefined,
+    hasChildren: false,
+    id: file.absPath,
+    isDir: false,
+    name: getBaseName(file.path),
+    relPath: file.path,
+  };
+}
+
+function createEditorTabFromSessionDiffFile(file: SessionDiffFile): EditorTab {
+  const content = resolveSessionDiffTabContent(file);
+
+  return {
+    absPath: file.absPath,
+    content,
+    isReadOnly: true,
+    name: getBaseName(file.path),
+    relPath: file.path,
+    savedContent: content,
+  };
+}
+
+function resolveSessionDiffTabContent(file: SessionDiffFile) {
+  if (file.isBinary) {
+    return "[Binary diff file cannot be opened in the text content area.]";
+  }
+
+  if (file.tooLarge) {
+    return "[Diff file is too large to open in the text content area.]";
+  }
+
+  if (file.status === "deleted") {
+    return file.originalContent ?? "";
+  }
+
+  return file.modifiedContent ?? file.originalContent ?? "";
+}
+
+function getBaseName(path: string) {
+  const normalized = path.replace(/[/\\]+$/, "");
+  return normalized.split(/[/\\]/).pop() || normalized;
+}
+
 async function findFileSearchResultFromTerminalSelection(
   rootPath: string,
   selectionText: string,
@@ -825,4 +1200,38 @@ function createWorkspaceWindowUrl(workspacePath: string) {
 
 function createWorkspaceWindowLabel() {
   return `workspace-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildWindowTitle(activeItemName: string | null | undefined, workspaceName: string) {
+  const normalizedActiveItemName = activeItemName?.trim();
+  const normalizedWorkspaceName = workspaceName.trim();
+
+  if (normalizedActiveItemName) {
+    if (normalizedWorkspaceName && normalizedWorkspaceName !== "Open Workspace") {
+      return `${normalizedActiveItemName} - ${normalizedWorkspaceName} - ${APP_WINDOW_TITLE}`;
+    }
+
+    return `${normalizedActiveItemName} - ${APP_WINDOW_TITLE}`;
+  }
+
+  if (normalizedWorkspaceName && normalizedWorkspaceName !== "Open Workspace") {
+    return `${normalizedWorkspaceName} - ${APP_WINDOW_TITLE}`;
+  }
+
+  return APP_WINDOW_TITLE;
+}
+
+function createSessionDiffTab(result: SessionDiffResult, sessionTitle: string): SessionDiffTab {
+  return {
+    id: createSessionDiffTabId(result.sessionId),
+    name: `${sessionTitle} Diff`,
+    relPath: `Session Diff/${sessionTitle}`,
+    result,
+    sessionTitle,
+    tabType: "sessionDiff",
+  };
+}
+
+function createSessionDiffTabId(sessionId: string) {
+  return `session-diff:${sessionId}`;
 }

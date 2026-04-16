@@ -19,6 +19,7 @@ export function InlineCmdTerminal({
   const autoOpenKeyRef = useRef<string | null>(null);
   const terminal = useTerminal({
     launchDir,
+    ownsSessionDiffLifecycle: false,
     onSessionComplete,
     shellKind: "cmd",
     workingDir,

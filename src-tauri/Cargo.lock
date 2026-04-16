@@ -1927,12 +1927,13 @@ dependencies = [
 
 [[package]]
 name = "jterminal"
-version = "1.0.0"
+version = "1.0.2"
 dependencies = [
  "pathdiff",
  "portable-pty",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

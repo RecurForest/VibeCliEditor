@@ -90,7 +90,6 @@ export function TerminalPane({
 
   const trimmedSelection = contextMenu?.selectionText.trim() ?? "";
   const canLocateSelection = Boolean(trimmedSelection);
-
   function handleViewportContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -132,11 +131,6 @@ export function TerminalPane({
           <span className="terminal__tab" data-active="true">
             {selectedSession?.title ?? "TERMINAL"}
           </span>
-          {selectedSession ? (
-            <span className="terminal__session-state" data-status={selectedSession.status}>
-              {selectedSession.status === "active" ? "LIVE" : "DONE"}
-            </span>
-          ) : null}
         </div>
         <div className="terminal__actions">
           <button

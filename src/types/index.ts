@@ -53,6 +53,36 @@ export interface TerminalExitEvent {
   exitCode?: number | null;
 }
 
+export type SessionDiffFileStatus = "added" | "deleted" | "modified";
+
+export interface SessionDiffFile {
+  path: string;
+  absPath: string;
+  status: SessionDiffFileStatus;
+  isBinary: boolean;
+  tooLarge: boolean;
+  originalContent: string | null;
+  modifiedContent: string | null;
+}
+
+export interface SessionDiffResult {
+  sessionId: string;
+  rootPath: string;
+  generatedAt: number;
+  files: SessionDiffFile[];
+}
+
+export type SessionDiffBaselineStatus = "idle" | "preparing" | "ready" | "error";
+
+export interface CodexDiffSessionState {
+  sessionId: string;
+  baselineStatus: SessionDiffBaselineStatus;
+  isDiffLoading: boolean;
+  error: string | null;
+}
+
+export type SessionDiffViewButtonState = "idle" | "preparing" | "loading" | "ready";
+
 export interface ContextMenuState {
   x: number;
   y: number;
@@ -65,7 +95,19 @@ export interface EditorTab {
   name: string;
   content: string;
   savedContent: string;
+  isReadOnly?: boolean;
 }
+
+export interface SessionDiffTab {
+  id: string;
+  name: string;
+  relPath: string;
+  result: SessionDiffResult;
+  sessionTitle?: string | null;
+  tabType: "sessionDiff";
+}
+
+export type WorkbenchTab = EditorTab | SessionDiffTab;
 
 export interface CursorPosition {
   line: number;

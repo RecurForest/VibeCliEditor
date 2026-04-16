@@ -7,19 +7,23 @@
 </p>
 
 <p align="center">
-  <strong>Jterminal 的核心目标，是解决终端优先的 vibe coding 里一个很具体的痛点：</strong>
-  当你使用 <code>codex</code> 或 <code>claude</code> 时，很难在纯终端环境里高频、顺手地把项目文件持续带入输入流。
+  <strong>Jterminal 最大的特色，是为 AI vibe coding 提供可审查、可回退的会话级 diff 工作流。</strong>
+  当你使用 <code>codex</code> 或 Claude Code（<code>claude</code>）开发时，真正麻烦的不只是让 AI 改代码，而是改完之后很难快速审查到底改了什么，也很难安全地还原。Jterminal 把这些终端驱动的改动直接变成可查看、可对比、可回退的工作流。
 </p>
 
 <p align="center">
-  Jterminal 把文件树、编辑器、集成终端和 AI CLI 入口放进同一个桌面工作区里，让你可以浏览文件、选中目标，并把文件路径快速送进终端工作流，而不需要在多个窗口和上下文之间来回切换。
+  你可以为一次 AI 会话建立 baseline，打开专门的 diff 视图，按文件检查改动，并按文件或按代码块执行 revert。这正面解决了 <code>codex</code> / Claude Code 工作流中最常见的痛点：改动来得快，但难审查、难撤销。
+</p>
+
+<p align="center">
+  同时，Jterminal 也把文件树、编辑器、集成终端和 AI CLI 入口放进同一个桌面工作区里，让你可以浏览文件、选中目标、查看 diff，并把文件路径快速送进终端工作流，而不需要在多个窗口和上下文之间来回切换。
 </p>
 
 <p align="center">
   <img src="public/jterminal-snapshot.png" alt="Jterminal snapshot" width="100%" />
 </p>
 
-> 核心意图：让你在 `codex` / `claude` 的终端会话里更轻松地引用项目文件，尤其是在 AI 驱动的开发循环中，需要不断把文件和路径带入上下文的时候。
+> 核心意图：让 `codex` / Claude Code 会话里的改动变得可审查、可还原，同时也让你更轻松地把正确的项目文件带进 AI 驱动的开发循环。
 
 ## 项目为什么存在
 
@@ -29,10 +33,12 @@
 - 判断下一个应该引用哪个文件或目录
 - 再把这些路径快速送回终端输入中
 
-Jterminal 就是围绕这个缺口设计的。左侧 Explorer 和工作区搜索负责更快定位文件，终端集成则负责把选中的路径更顺手地送进当前终端会话。
+Jterminal 就是围绕这个缺口设计的。会话级 diff 工作流负责解决“怎么审查、怎么还原”这类核心问题，左侧 Explorer、工作区搜索和终端集成则负责更快定位文件，并把选中的路径更顺手地送进当前 AI 会话。
 
 ## 功能特性
 
+- 面向 AI 编码会话的 session diff 工作流，支持 baseline 建立、专用 diff 视图和还原操作
+- 支持按文件和按代码块回退 `codex` / `claude` 工作流中的改动
 - 基于 Tauri 2、React 19、TypeScript 和 Rust 的桌面工作区
 - 支持懒加载、选择、刷新和上下文操作的文件树 Explorer
 - 基于 Monaco 的代码编辑器，适配常见源码文件类型

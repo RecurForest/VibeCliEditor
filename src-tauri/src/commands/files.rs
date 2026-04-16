@@ -47,6 +47,20 @@ pub fn write_file(root_path: String, file_path: String, content: String) -> Resu
 }
 
 #[tauri::command]
+pub fn upsert_file(root_path: String, file_path: String, content: String) -> Result<(), String> {
+    let root = PathBuf::from(root_path);
+    let file = PathBuf::from(file_path);
+    file_tree::upsert_file(&root, &file, content)
+}
+
+#[tauri::command]
+pub fn delete_file(root_path: String, file_path: String) -> Result<(), String> {
+    let root = PathBuf::from(root_path);
+    let file = PathBuf::from(file_path);
+    file_tree::delete_file(&root, &file)
+}
+
+#[tauri::command]
 pub fn search_files(root_path: String, query: String) -> Result<Vec<FileSearchResult>, String> {
     let root = PathBuf::from(root_path);
     file_tree::search_files(&root, &query, 40)

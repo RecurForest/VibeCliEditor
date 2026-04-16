@@ -7,19 +7,23 @@ English | [简体中文](./README.zh-CN.md)
 </p>
 
 <p align="center">
-  <strong>Jterminal exists to solve a very specific terminal-first vibe coding pain point:</strong>
-  when using <code>codex</code> or <code>claude</code>, it is awkward to repeatedly bring project files into the prompt/input flow from a plain terminal.
+  <strong>Jterminal's defining feature is its AI session diff workflow.</strong>
+  In vibe coding with <code>codex</code> or Claude Code (<code>claude</code>), the hard part is not only generating code, but being able to review what the agent changed and safely roll it back. Jterminal makes those terminal-driven changes visible, reviewable, and reversible inside one workspace.
 </p>
 
 <p align="center">
-  Jterminal combines the file tree, editor, integrated terminal, and AI CLI entry points into one desktop workspace so you can browse files, select targets, and insert file paths into the terminal workflow without constantly switching contexts.
+  You can capture a baseline for an AI session, open a dedicated diff view, inspect changes file by file, and revert either a whole file or a single hunk. This directly addresses one of the biggest pain points in <code>codex</code> / Claude Code workflows: code changes happen fast, but they are hard to audit and hard to undo.
+</p>
+
+<p align="center">
+  Jterminal also combines the file tree, editor, integrated terminal, and AI CLI entry points into one desktop workspace so you can browse files, select targets, inspect diffs, and insert file paths into the terminal workflow without constantly switching contexts.
 </p>
 
 <p align="center">
   <img src="public/jterminal-snapshot.png" alt="Jterminal snapshot" width="100%" />
 </p>
 
-> Core intent: make it much easier to reference project files during `codex` / `claude` terminal sessions, especially when you need to continuously pull files into an AI-driven development loop.
+> Core intent: make `codex` / Claude Code sessions auditable and reversible, while also making it much easier to bring the right project files into an AI-driven development loop.
 
 ## Why It Exists
 
@@ -29,10 +33,12 @@ In a normal terminal workflow, AI CLI tools are strong at generating and editing
 - deciding which file or directory should be referenced next
 - quickly feeding those paths back into the terminal prompt
 
-Jterminal is built around that gap. The left-side Explorer and workspace search help you find files quickly, and the terminal integration lets you insert the selected paths into the active terminal session with much less friction.
+Jterminal is built around that gap. The session diff workflow solves the review and rollback problem, while the Explorer, workspace search, and terminal integration make it much easier to find files and feed the right paths back into the active AI session.
 
 ## Features
 
+- Session diff workflow for AI coding sessions, with baseline capture, dedicated diff view, and revert support
+- File-level and hunk-level rollback for changes made during `codex` / `claude` workflows
 - Desktop workspace built with Tauri 2, React 19, TypeScript, and Rust
 - File tree Explorer with lazy loading, selection, refresh, and context actions
 - Monaco-based code editor for common source file types

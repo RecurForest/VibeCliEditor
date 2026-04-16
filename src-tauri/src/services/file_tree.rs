@@ -51,6 +51,44 @@ pub fn write_file(root: &Path, file: &Path, content: String) -> Result<(), Strin
     fs::write(file, content).map_err(|error| error.to_string())
 }
 
+pub fn upsert_file(root: &Path, file: &Path, content: String) -> Result<(), String> {
+    let root = normalize_directory(root)?;
+    let file = normalize_path(root.as_path(), file)?;
+    ensure_within_root(&root, &file)?;
+
+    if file.exists() && file.is_dir() {
+        return Err(format!(
+            "Cannot write directory as file: {}",
+            file.to_string_lossy()
+        ));
+    }
+
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    fs::write(file, content).map_err(|error| error.to_string())
+}
+
+pub fn delete_file(root: &Path, file: &Path) -> Result<(), String> {
+    let root = normalize_directory(root)?;
+    let file = normalize_path(root.as_path(), file)?;
+    ensure_within_root(&root, &file)?;
+
+    if !file.exists() {
+        return Ok(());
+    }
+
+    if file.is_dir() {
+        return Err(format!(
+            "Cannot delete directory as file: {}",
+            file.to_string_lossy()
+        ));
+    }
+
+    fs::remove_file(file).map_err(|error| error.to_string())
+}
+
 pub fn search_files(root: &Path, query: &str, limit: usize) -> Result<Vec<FileSearchResult>, String> {
     let root = normalize_directory(root)?;
     let tokens = normalize_query_tokens(query);
@@ -144,6 +182,52 @@ fn normalize_directory(path: &Path) -> Result<PathBuf, String> {
 
 fn normalize_existing_path(path: &Path) -> Result<PathBuf, String> {
     fs::canonicalize(path).map_err(|error| error.to_string())
+}
+
+fn normalize_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+
+    if candidate.exists() {
+        return normalize_existing_path(&candidate);
+    }
+
+    normalize_missing_path(&candidate)
+}
+
+fn normalize_missing_path(path: &Path) -> Result<PathBuf, String> {
+    let mut existing_ancestor = path.to_path_buf();
+    let mut suffix = Vec::new();
+
+    while !existing_ancestor.exists() {
+        let Some(name) = existing_ancestor.file_name() else {
+            return Err(format!(
+                "Path does not have an existing ancestor: {}",
+                path.to_string_lossy()
+            ));
+        };
+
+        suffix.push(PathBuf::from(name));
+        existing_ancestor = existing_ancestor
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                format!(
+                    "Path does not have an existing ancestor: {}",
+                    path.to_string_lossy()
+                )
+            })?;
+    }
+
+    let mut normalized = fs::canonicalize(&existing_ancestor).map_err(|error| error.to_string())?;
+    for component in suffix.iter().rev() {
+        normalized.push(component);
+    }
+
+    Ok(normalized)
 }
 
 fn ensure_within_root(root: &Path, dir: &Path) -> Result<(), String> {
