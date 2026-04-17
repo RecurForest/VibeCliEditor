@@ -6,7 +6,7 @@ import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 
-export const MONACO_THEME = "jterminal-dark";
+export const MONACO_THEME = "vibe-cli-editor-dark";
 
 const globalScope = self as typeof globalThis & {
   MonacoEnvironment?: {
@@ -117,6 +117,7 @@ export function resolveEditorLanguage(fileName?: string) {
     case "html":
     case "htm":
     case "xhtml":
+    case "vue":
       return "html";
     case "css":
     case "scss":

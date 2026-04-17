@@ -3,6 +3,23 @@
 version = 4
 
 [[package]]
+name = "VibeCliEditor"
+version = "1.0.2"
+dependencies = [
+ "pathdiff",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "time",
+ "uuid",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1923,22 +1940,6 @@ checksum = "5dea2b27dd239b2556ed7a25ba842fe47fd602e7fc7433c2a8d6106d4d9edd70"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "jterminal"
-version = "1.0.2"
-dependencies = [
- "pathdiff",
- "portable-pty",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "uuid",
 ]
 
 [[package]]

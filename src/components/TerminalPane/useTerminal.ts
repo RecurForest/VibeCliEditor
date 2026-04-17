@@ -4,6 +4,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AgentProvider,
+  AgentSessionMeta,
+  AgentSessionProfile,
   CodexDiffSessionState,
   PathInsertMode,
   SessionDiffResult,
@@ -15,25 +18,52 @@ import type {
   TerminalSessionMode,
   TerminalSessionRecord,
 } from "../../types";
+import {
+  buildAgentTerminalProcess,
+  cloneAgentProfile,
+  createDefaultAgentProfile,
+  getAgentProviderLabel,
+  getRuntimeModelSwitchStrategy,
+  patchAgentProfile,
+  type AgentTerminalProcess,
+} from "./agentSessionProfiles";
+import type { TerminalComposerSendStrategy } from "./terminalComposerSendStrategy";
 
 interface UseTerminalOptions {
   launchDir: string | null;
   ownsSessionDiffLifecycle?: boolean;
   onSessionComplete?: () => void;
+  persistSessions?: boolean;
   shellKind: ShellKind;
   workingDir: string | null;
 }
 
 interface StartSessionOptions {
+  agent?: AgentSessionMeta | null;
   initialCommand?: string | null;
   mode: TerminalSessionMode;
+  spawnProcess?: AgentTerminalProcess | null;
+  startupInput?: string | null;
   title: string;
+}
+
+interface SendTextOptions {
+  appendNewline?: boolean;
+  sendStrategy?: TerminalComposerSendStrategy;
+  trackTitleInput?: boolean;
+}
+
+interface StartAgentSessionOptions {
+  continueFromLast?: boolean;
+  continueFromSessionId?: string | null;
+  prompt?: string | null;
 }
 
 export function useTerminal({
   launchDir,
   ownsSessionDiffLifecycle = true,
   onSessionComplete,
+  persistSessions = true,
   shellKind,
   workingDir,
 }: UseTerminalOptions) {
@@ -42,8 +72,17 @@ export function useTerminal({
   const [sessions, setSessions] = useState<TerminalSessionRecord[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [isSessionDiffEnabled, setIsSessionDiffEnabled] = useState(false);
-  const [codexDiffStates, setCodexDiffStates] = useState<Record<string, CodexDiffSessionState>>({});
+  const [codexDiffStates, setCodexDiffStates] = useState<Record<string, CodexDiffSessionState>>(
+    {},
+  );
   const [error, setError] = useState<string | null>(null);
+  const [preferredAgentProvider, setPreferredAgentProvider] = useState<AgentProvider>("codex");
+  const [pendingAgentProfiles, setPendingAgentProfiles] = useState<
+    Record<AgentProvider, AgentSessionProfile>
+  >(() => ({
+    claude: createDefaultAgentProfile("claude"),
+    codex: createDefaultAgentProfile("codex"),
+  }));
   const [terminalReady, setTerminalReady] = useState(false);
 
   const terminalRef = useRef<Terminal | null>(null);
@@ -56,6 +95,12 @@ export function useTerminal({
   const sessionDiffCaptureVersionRef = useRef<Record<string, number>>({});
   const sessionTitleInputRef = useRef<Record<string, string>>({});
   const sessionHasCustomTitleRef = useRef<Record<string, boolean>>({});
+  const suspendedTitleTrackingUntilRef = useRef<Record<string, number>>({});
+  const pendingAgentProfilesRef = useRef<Record<AgentProvider, AgentSessionProfile>>(
+    pendingAgentProfiles,
+  );
+  const restoredStorageKeyRef = useRef<string | null>(null);
+  const hydratedStorageKeyRef = useRef<string | null>(null);
 
   const containerRef = useCallback((node: HTMLDivElement | null) => {
     setContainerElement(node);
@@ -70,10 +115,90 @@ export function useTerminal({
     [codexDiffStates, selectedSession],
   );
   const supportsSelectedSessionDiff = supportsSessionDiff(selectedSession?.mode);
+  const persistedSessionStorageKey = useMemo(
+    () => (persistSessions && workingDir ? createPersistedSessionsStorageKey(workingDir) : null),
+    [persistSessions, workingDir],
+  );
 
   useEffect(() => {
     isSessionDiffEnabledRef.current = isSessionDiffEnabled;
   }, [isSessionDiffEnabled]);
+
+  useEffect(() => {
+    pendingAgentProfilesRef.current = pendingAgentProfiles;
+  }, [pendingAgentProfiles]);
+
+  const applySessions = useCallback(
+    (updater: (current: TerminalSessionRecord[]) => TerminalSessionRecord[]) => {
+      const nextSessions = updater(sessionsRef.current);
+      sessionsRef.current = nextSessions;
+      setSessions(nextSessions);
+
+      const activeSessionIds = new Set(nextSessions.map((session) => session.id));
+      for (const sessionId of Object.keys(sessionTitleInputRef.current)) {
+        if (!activeSessionIds.has(sessionId)) {
+          delete sessionTitleInputRef.current[sessionId];
+        }
+      }
+
+      for (const sessionId of Object.keys(sessionHasCustomTitleRef.current)) {
+        if (!activeSessionIds.has(sessionId)) {
+          delete sessionHasCustomTitleRef.current[sessionId];
+        }
+      }
+
+      for (const sessionId of Object.keys(suspendedTitleTrackingUntilRef.current)) {
+        if (!activeSessionIds.has(sessionId)) {
+          delete suspendedTitleTrackingUntilRef.current[sessionId];
+        }
+      }
+
+      return nextSessions;
+    },
+    [],
+  );
+
+  const applyPendingAgentProfiles = useCallback(
+    (
+      updater: (
+        current: Record<AgentProvider, AgentSessionProfile>,
+      ) => Record<AgentProvider, AgentSessionProfile>,
+    ) => {
+      const nextProfiles = updater(pendingAgentProfilesRef.current);
+      pendingAgentProfilesRef.current = nextProfiles;
+      setPendingAgentProfiles(nextProfiles);
+      return nextProfiles;
+    },
+    [],
+  );
+
+  const applyCodexDiffStates = useCallback(
+    (
+      updater: (
+        current: Record<string, CodexDiffSessionState>,
+      ) => Record<string, CodexDiffSessionState>,
+    ) => {
+      const nextStates = updater(codexDiffStatesRef.current);
+      codexDiffStatesRef.current = nextStates;
+      setCodexDiffStates(nextStates);
+      return nextStates;
+    },
+    [],
+  );
+
+  const shouldTrackSessionTitleInput = useCallback((sessionId: string) => {
+    const suspendedUntil = suspendedTitleTrackingUntilRef.current[sessionId];
+    if (!suspendedUntil) {
+      return true;
+    }
+
+    if (Date.now() >= suspendedUntil) {
+      delete suspendedTitleTrackingUntilRef.current[sessionId];
+      return true;
+    }
+
+    return false;
+  }, []);
 
   const pasteTextIntoTerminal = useCallback(async () => {
     if (!terminalRef.current || !navigator.clipboard?.readText) {
@@ -119,41 +244,6 @@ export function useTerminal({
     }
   }, []);
 
-  const applySessions = useCallback((updater: (current: TerminalSessionRecord[]) => TerminalSessionRecord[]) => {
-    const nextSessions = updater(sessionsRef.current);
-    sessionsRef.current = nextSessions;
-    setSessions(nextSessions);
-
-    const activeSessionIds = new Set(nextSessions.map((session) => session.id));
-    for (const sessionId of Object.keys(sessionTitleInputRef.current)) {
-      if (!activeSessionIds.has(sessionId)) {
-        delete sessionTitleInputRef.current[sessionId];
-      }
-    }
-
-    for (const sessionId of Object.keys(sessionHasCustomTitleRef.current)) {
-      if (!activeSessionIds.has(sessionId)) {
-        delete sessionHasCustomTitleRef.current[sessionId];
-      }
-    }
-
-    return nextSessions;
-  }, []);
-
-  const applyCodexDiffStates = useCallback(
-    (
-      updater: (
-        current: Record<string, CodexDiffSessionState>,
-      ) => Record<string, CodexDiffSessionState>,
-    ) => {
-      const nextStates = updater(codexDiffStatesRef.current);
-      codexDiffStatesRef.current = nextStates;
-      setCodexDiffStates(nextStates);
-      return nextStates;
-    },
-    [],
-  );
-
   const disposeSessionDiffBaselines = useCallback(
     (keepSessionId: string | null = null) => {
       if (!ownsSessionDiffLifecycle) {
@@ -192,13 +282,10 @@ export function useTerminal({
     [applyCodexDiffStates],
   );
 
-  const clearCodexDiffStates = useCallback(
-    () => {
-      sessionDiffCaptureVersionRef.current = {};
-      applyCodexDiffStates(() => ({}));
-    },
-    [applyCodexDiffStates],
-  );
+  const clearCodexDiffStates = useCallback(() => {
+    sessionDiffCaptureVersionRef.current = {};
+    applyCodexDiffStates(() => ({}));
+  }, [applyCodexDiffStates]);
 
   const disposeSessionResources = useCallback(
     (session: TerminalSessionRecord) => {
@@ -236,10 +323,10 @@ export function useTerminal({
       applyCodexDiffStates((current) => ({
         ...current,
         [sessionId]: {
-          sessionId,
           baselineStatus: "preparing",
-          isDiffLoading: false,
           error: null,
+          isDiffLoading: false,
+          sessionId,
         },
       }));
 
@@ -260,10 +347,10 @@ export function useTerminal({
         applyCodexDiffStates((current) => ({
           ...current,
           [sessionId]: {
-            sessionId,
             baselineStatus: "ready",
-            isDiffLoading: false,
             error: null,
+            isDiffLoading: false,
+            sessionId,
           },
         }));
       } catch (reason) {
@@ -279,10 +366,10 @@ export function useTerminal({
         applyCodexDiffStates((current) => ({
           ...current,
           [sessionId]: {
-            sessionId,
             baselineStatus: "error",
-            isDiffLoading: false,
             error: message,
+            isDiffLoading: false,
+            sessionId,
           },
         }));
       }
@@ -361,6 +448,62 @@ export function useTerminal({
     }
   }, []);
 
+  useEffect(() => {
+    if (!terminalReady || !persistedSessionStorageKey) {
+      if (!persistedSessionStorageKey) {
+        restoredStorageKeyRef.current = null;
+        hydratedStorageKeyRef.current = null;
+      }
+      return;
+    }
+
+    if (restoredStorageKeyRef.current === persistedSessionStorageKey) {
+      return;
+    }
+
+    restoredStorageKeyRef.current = persistedSessionStorageKey;
+    hydratedStorageKeyRef.current = null;
+
+    const persistedState = loadPersistedTerminalState(persistedSessionStorageKey);
+    const restoredSessions = persistedState.sessions.map(restorePersistedTerminalSession);
+
+    sessionsRef.current = restoredSessions;
+    setSessions(restoredSessions);
+
+    const nextSelectedSession =
+      getSessionById(restoredSessions, persistedState.selectedSessionId) ??
+      restoredSessions[restoredSessions.length - 1] ??
+      null;
+
+    selectedSessionIdRef.current = nextSelectedSession?.id ?? null;
+    setSelectedSessionId(nextSelectedSession?.id ?? null);
+
+    if (nextSelectedSession?.agent?.provider) {
+      setPreferredAgentProvider(nextSelectedSession.agent.provider);
+    }
+
+    renderSessionOutput(nextSelectedSession?.output ?? "");
+    hydratedStorageKeyRef.current = persistedSessionStorageKey;
+  }, [persistedSessionStorageKey, renderSessionOutput, terminalReady]);
+
+  useEffect(() => {
+    if (!terminalReady || !persistedSessionStorageKey) {
+      return;
+    }
+
+    if (hydratedStorageKeyRef.current !== persistedSessionStorageKey) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      persistTerminalState(persistedSessionStorageKey, sessions, selectedSessionId);
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [persistedSessionStorageKey, selectedSessionId, sessions, terminalReady]);
+
   const selectSession = useCallback(
     (sessionId: string) => {
       const nextSession = getSessionById(sessionsRef.current, sessionId);
@@ -370,6 +513,9 @@ export function useTerminal({
 
       selectedSessionIdRef.current = sessionId;
       setSelectedSessionId(sessionId);
+      if (nextSession.agent?.provider) {
+        setPreferredAgentProvider(nextSession.agent.provider);
+      }
       renderSessionOutput(nextSession.output);
       if (nextSession.status === "active" && terminalRef.current) {
         void invoke("terminal_resize", {
@@ -397,7 +543,7 @@ export function useTerminal({
       cursorWidth: 1,
       fontFamily: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
       fontSize: 13,
-      scrollback: 5000,
+      scrollback: 50000,
       theme: {
         background: terminalBackground,
         black: terminalBackground,
@@ -478,7 +624,9 @@ export function useTerminal({
         return;
       }
 
-      captureSessionTitleInput(activeSession.id, data);
+      if (shouldTrackSessionTitleInput(activeSession.id)) {
+        captureSessionTitleInput(activeSession.id, data);
+      }
       void invoke("terminal_write", {
         data,
         sessionId: activeSession.id,
@@ -527,11 +675,13 @@ export function useTerminal({
       selectedSessionIdRef.current = null;
     };
   }, [
+    captureSessionTitleInput,
     containerElement,
     copyTerminalSelection,
     disposeSessionResourcesForList,
     ownsSessionDiffLifecycle,
     pasteTextIntoTerminal,
+    shouldTrackSessionTitleInput,
   ]);
 
   useEffect(() => {
@@ -600,7 +750,14 @@ export function useTerminal({
   }, [applySessions, onSessionComplete]);
 
   const startSession = useCallback(
-    async ({ initialCommand, mode, title }: StartSessionOptions) => {
+    async ({
+      agent = null,
+      initialCommand,
+      mode,
+      spawnProcess = null,
+      startupInput = null,
+      title,
+    }: StartSessionOptions) => {
       const targetDir = launchDir ?? workingDir;
 
       if (!targetDir) {
@@ -619,11 +776,14 @@ export function useTerminal({
           cols: terminalRef.current.cols,
           rows: terminalRef.current.rows,
           shellKind,
+          spawnProcess,
+          startupInput,
           startupCommand: initialCommand?.trim() ? initialCommand.trim() : null,
           workingDir: targetDir,
         });
 
         const nextSession: TerminalSessionRecord = {
+          agent,
           id: session.sessionId,
           mode,
           output: createSessionBanner(title, session.workingDir),
@@ -639,6 +799,9 @@ export function useTerminal({
         applySessions((current) => [...current, nextSession]);
         selectedSessionIdRef.current = nextSession.id;
         setSelectedSessionId(nextSession.id);
+        if (agent?.provider) {
+          setPreferredAgentProvider(agent.provider);
+        }
         renderSessionOutput(nextSession.output);
         terminalRef.current.focus();
 
@@ -653,7 +816,15 @@ export function useTerminal({
         throw reason;
       }
     },
-    [applySessions, captureSessionDiffBaseline, launchDir, renderSessionOutput, shellKind, terminalReady, workingDir],
+    [
+      applySessions,
+      captureSessionDiffBaseline,
+      launchDir,
+      renderSessionOutput,
+      shellKind,
+      terminalReady,
+      workingDir,
+    ],
   );
 
   useEffect(() => {
@@ -724,28 +895,297 @@ export function useTerminal({
     terminalRef.current?.focus();
   }, []);
 
-  const openShell = useCallback(() => {
-    void startSession({
+  const updatePendingAgentProfile = useCallback(
+    (provider: AgentProvider, patch: Partial<AgentSessionProfile>) => {
+      setPreferredAgentProvider(provider);
+      applyPendingAgentProfiles((current) => ({
+        ...current,
+        [provider]: patchAgentProfile(current[provider], patch),
+      }));
+    },
+    [applyPendingAgentProfiles],
+  );
+
+  const patchSessionAgentProfile = useCallback(
+    (sessionId: string, patch: Partial<AgentSessionProfile>) => {
+      applySessions((current) =>
+        current.map((session) => {
+          if (session.id !== sessionId || !session.agent) {
+            return session;
+          }
+
+          return {
+            ...session,
+            agent: {
+              ...session.agent,
+              requestedProfile: patchAgentProfile(session.agent.requestedProfile, patch),
+            },
+          };
+        }),
+      );
+    },
+    [applySessions],
+  );
+
+  const setSessionRuntimeSessionId = useCallback(
+    (sessionId: string, runtimeSessionId: string) => {
+      applySessions((current) =>
+        current.map((session) => {
+          if (session.id !== sessionId || !session.agent) {
+            return session;
+          }
+
+          return {
+            ...session,
+            agent: {
+              ...session.agent,
+              runtimeSessionId,
+            },
+          };
+        }),
+      );
+    },
+    [applySessions],
+  );
+
+  const resolveCodexRuntimeSessionId = useCallback(async (targetWorkingDir: string, startedAt: number) => {
+    return invoke<string | null>("resolve_codex_session_id", {
+      startedAtMs: Math.max(0, Math.floor(startedAt)),
+      timeoutMs: 5000,
+      workingDir: targetWorkingDir,
+    });
+  }, []);
+
+  const ensureCodexRuntimeSessionId = useCallback(
+    async (sessionId: string) => {
+      const session = getSessionById(sessionsRef.current, sessionId);
+      if (!session || session.mode !== "codex" || !session.agent) {
+        return null;
+      }
+
+      const existingRuntimeSessionId = session.agent.runtimeSessionId?.trim();
+      if (existingRuntimeSessionId) {
+        return existingRuntimeSessionId;
+      }
+
+      const resolvedRuntimeSessionId = await resolveCodexRuntimeSessionId(
+        session.workingDir,
+        session.startedAt,
+      );
+      if (resolvedRuntimeSessionId) {
+        setSessionRuntimeSessionId(sessionId, resolvedRuntimeSessionId);
+      }
+
+      return resolvedRuntimeSessionId;
+    },
+    [resolveCodexRuntimeSessionId, setSessionRuntimeSessionId],
+  );
+
+  const startShellSession = useCallback(async () => {
+    return startSession({
       mode: "shell",
       title: shellKind === "powershell" ? "PowerShell" : "CMD",
-    }).catch(() => undefined);
+    });
   }, [shellKind, startSession]);
 
+  const startAgentSession = useCallback(
+    async (
+      profile: AgentSessionProfile,
+      {
+        continueFromLast = false,
+        continueFromSessionId = null,
+        prompt = null,
+      }: StartAgentSessionOptions = {},
+    ) => {
+      const normalizedProfile = cloneAgentProfile(profile);
+      updatePendingAgentProfile(normalizedProfile.provider, normalizedProfile);
+      const targetDir = launchDir ?? workingDir;
+      const codexLaunchStartedAt =
+        normalizedProfile.provider === "codex" && !continueFromLast ? Date.now() : null;
+      let runtimeSessionId: string | null = null;
+
+      if (normalizedProfile.provider === "codex" && continueFromLast) {
+        if (!continueFromSessionId) {
+          throw new Error("Select an active Codex session first.");
+        }
+
+        runtimeSessionId = await ensureCodexRuntimeSessionId(continueFromSessionId);
+        if (!runtimeSessionId) {
+          throw new Error(
+            "Unable to resolve the active Codex session ID. Start a new Codex session and try again.",
+          );
+        }
+      }
+
+      const shouldSendPromptViaStartupInput =
+        normalizedProfile.provider === "codex" && continueFromLast && Boolean(prompt?.trim());
+
+      const nextSessionId = await startSession({
+        agent: {
+          provider: normalizedProfile.provider,
+          requestedProfile: normalizedProfile,
+          runtimeSessionId,
+          runtimeModelSwitchStrategy: getRuntimeModelSwitchStrategy(normalizedProfile.provider),
+        },
+        mode: normalizedProfile.provider,
+        spawnProcess: buildAgentTerminalProcess(normalizedProfile, {
+          continueFromLast,
+          prompt: shouldSendPromptViaStartupInput ? null : prompt,
+          runtimeSessionId,
+        }),
+        startupInput: shouldSendPromptViaStartupInput
+          ? `${prepareTerminalInputForPaste(prompt ?? "", false)}\r`
+          : null,
+        title: getAgentProviderLabel(normalizedProfile.provider),
+      });
+
+      if (normalizedProfile.provider === "codex" && !runtimeSessionId && targetDir) {
+        void resolveCodexRuntimeSessionId(targetDir, codexLaunchStartedAt ?? Date.now())
+          .then((resolvedRuntimeSessionId) => {
+            if (resolvedRuntimeSessionId) {
+              setSessionRuntimeSessionId(nextSessionId, resolvedRuntimeSessionId);
+            }
+          })
+          .catch(() => undefined);
+      }
+
+      return nextSessionId;
+    },
+    [
+      ensureCodexRuntimeSessionId,
+      launchDir,
+      resolveCodexRuntimeSessionId,
+      setSessionRuntimeSessionId,
+      startSession,
+      updatePendingAgentProfile,
+      workingDir,
+    ],
+  );
+
+  const sendRawText = useCallback(
+    async (
+      sessionId: string,
+      text: string,
+      {
+        appendNewline = true,
+        sendStrategy = "auto",
+        trackTitleInput = true,
+      }: SendTextOptions = {},
+    ) => {
+      const session = getSessionById(sessionsRef.current, sessionId);
+      if (!session || session.status !== "active") {
+        throw new Error("Select an active terminal session first.");
+      }
+
+      const terminal = terminalRef.current;
+      const canUseVisibleTerminalInput =
+        sessionId === selectedSessionIdRef.current && Boolean(terminal?.textarea);
+      const resolvedSendStrategy = resolveComposerSendStrategy(
+        sendStrategy,
+        canUseVisibleTerminalInput,
+      );
+
+      if (!text && !appendNewline) {
+        return;
+      }
+
+      const pastePayload = prepareTerminalInputForPaste(text, false);
+      const submitPayload = getComposerStrategySubmitPayload(
+        resolvedSendStrategy,
+        appendNewline,
+      );
+
+      if (isVisibleComposerSendStrategy(resolvedSendStrategy) && terminal?.textarea) {
+        if (!trackTitleInput) {
+          suspendedTitleTrackingUntilRef.current[sessionId] = Date.now() + 250;
+        }
+
+        await sendVisibleTerminalText({
+          appendNewline,
+          pastePayload,
+          rawText: text,
+          strategy: resolvedSendStrategy,
+          terminal,
+          textarea: terminal.textarea,
+        });
+
+        setError(null);
+        return;
+      }
+
+      if (trackTitleInput) {
+        captureSessionTitleInput(sessionId, `${pastePayload}${submitPayload}`);
+      }
+
+      if (pastePayload) {
+        await invoke("terminal_write", {
+          data: pastePayload,
+          sessionId,
+        });
+      }
+
+      if (submitPayload) {
+        await invoke("terminal_write", {
+          data: submitPayload,
+          sessionId,
+        });
+      }
+
+      terminalRef.current?.focus();
+      setError(null);
+    },
+    [captureSessionTitleInput],
+  );
+
+  const sendToSelectedSession = useCallback(
+    async (
+      text: string,
+      {
+        appendNewline = true,
+        sendStrategy = "auto",
+        startShellIfMissing = false,
+        trackTitleInput = true,
+      }: SendTextOptions & { startShellIfMissing?: boolean } = {},
+    ) => {
+      const activeSession = getSessionById(sessionsRef.current, selectedSessionIdRef.current);
+
+      if (activeSession?.status === "active") {
+        await sendRawText(activeSession.id, text, {
+          appendNewline,
+          sendStrategy,
+          trackTitleInput,
+        });
+        return activeSession.id;
+      }
+
+      if (!startShellIfMissing) {
+        throw new Error("Start a shell, Codex, or Claude session first.");
+      }
+
+      const sessionId = await startShellSession();
+      await sendRawText(sessionId, text, {
+        appendNewline,
+        sendStrategy,
+        trackTitleInput,
+      });
+      return sessionId;
+    },
+    [sendRawText, startShellSession],
+  );
+
+  const openShell = useCallback(() => {
+    void startShellSession().catch(() => undefined);
+  }, [startShellSession]);
+
   const launchCodex = useCallback(() => {
-    void startSession({
-      initialCommand: "codex --yolo",
-      mode: "codex",
-      title: "Codex",
-    }).catch(() => undefined);
-  }, [startSession]);
+    setPreferredAgentProvider("codex");
+    void startAgentSession(pendingAgentProfilesRef.current.codex).catch(() => undefined);
+  }, [startAgentSession]);
 
   const launchClaude = useCallback(() => {
-    void startSession({
-      initialCommand: "claude",
-      mode: "claude",
-      title: "Claude",
-    }).catch(() => undefined);
-  }, [startSession]);
+    setPreferredAgentProvider("claude");
+    void startAgentSession(pendingAgentProfilesRef.current.claude).catch(() => undefined);
+  }, [startAgentSession]);
 
   const clearTerminal = useCallback(() => {
     const activeSession = getSessionById(sessionsRef.current, selectedSessionIdRef.current);
@@ -761,6 +1201,15 @@ export function useTerminal({
     renderSessionOutput("");
     terminalRef.current?.focus();
   }, [applySessions, renderSessionOutput]);
+
+  const endSession = useCallback(async (sessionId: string) => {
+    const session = getSessionById(sessionsRef.current, sessionId);
+    if (!session || session.status !== "active") {
+      return;
+    }
+
+    await invoke("terminal_close", { sessionId });
+  }, []);
 
   const closeTerminal = useCallback(() => {
     const activeSession = getSessionById(sessionsRef.current, selectedSessionIdRef.current);
@@ -787,6 +1236,9 @@ export function useTerminal({
     setSessions(nextSessions);
     selectedSessionIdRef.current = fallbackSession?.id ?? null;
     setSelectedSessionId(fallbackSession?.id ?? null);
+    if (fallbackSession?.agent?.provider) {
+      setPreferredAgentProvider(fallbackSession.agent.provider);
+    }
     renderSessionOutput(fallbackSession?.output ?? "");
     setError(null);
   }, [disposeSessionResources, renderSessionOutput]);
@@ -853,8 +1305,8 @@ export function useTerminal({
           ...current,
           [sessionId]: {
             ...nextState,
-            isDiffLoading: true,
             error: null,
+            isDiffLoading: true,
           },
         };
       });
@@ -875,8 +1327,8 @@ export function useTerminal({
             ...current,
             [sessionId]: {
               ...nextState,
-              isDiffLoading: false,
               error: null,
+              isDiffLoading: false,
             },
           };
         });
@@ -894,8 +1346,8 @@ export function useTerminal({
             ...current,
             [sessionId]: {
               ...nextState,
-              isDiffLoading: false,
               error: message,
+              isDiffLoading: false,
             },
           };
         });
@@ -972,7 +1424,7 @@ export function useTerminal({
         ? "Baseline is available for Codex and Claude sessions only."
         : !selectedSession
           ? "Select a Codex or Claude session first."
-        : selectedSessionDiffViewButtonState === "loading"
+          : selectedSessionDiffViewButtonState === "loading"
             ? "Wait until the current diff request finishes."
             : selectedSessionDiffViewButtonState === "preparing"
               ? "Building a baseline snapshot for this AI session."
@@ -987,12 +1439,7 @@ export function useTerminal({
   async function insertPaths(paths: string[], projectRoot: string, mode: PathInsertMode) {
     const activeSession = getSessionById(sessionsRef.current, selectedSessionIdRef.current);
     const targetSessionId =
-      activeSession?.status === "active"
-        ? activeSession.id
-        : await startSession({
-            mode: "shell",
-            title: shellKind === "powershell" ? "PowerShell" : "CMD",
-          });
+      activeSession?.status === "active" ? activeSession.id : await startShellSession();
 
     await invoke("insert_paths", {
       mode,
@@ -1012,32 +1459,41 @@ export function useTerminal({
     closeTerminal,
     copySelection: copyTerminalSelection,
     containerRef,
+    endSession,
     error,
+    focusTerminal,
     getSelectionText: () => terminalRef.current?.getSelection() ?? "",
     hasSessions: sessions.length > 0,
+    insertPaths,
     isSessionActive: selectedSession?.status === "active",
     isSessionDiffEnabled,
-    launchDir: launchDir ?? workingDir,
-    focusTerminal,
-    insertPaths,
     launchClaude,
     launchCodex,
+    launchDir: launchDir ?? workingDir,
     loadSessionDiff,
     openShell,
     pasteFromClipboard: pasteTextIntoTerminal,
+    patchSessionAgentProfile,
+    pendingAgentProfiles,
+    preferredAgentProvider,
     rebuildSelectedSessionDiffBaseline,
     selectSession,
+    selectedSession,
     selectedSessionDiffBaselineButtonLabel,
     selectedSessionDiffBaselineButtonTitle,
     selectedSessionDiffState,
     selectedSessionDiffViewButtonLabel,
     selectedSessionDiffViewButtonTitle,
-    selectedSession,
     selectedSessionId,
+    sendRawText,
+    sendToSelectedSession,
     sessionDiffToggleLabel,
     sessionDiffToggleTitle,
     sessions,
+    startAgentSession,
+    startShellSession,
     toggleSessionDiff,
+    updatePendingAgentProfile,
     viewSelectedSessionDiff,
   };
 }
@@ -1076,4 +1532,365 @@ function isPrintableInputCharacter(character: string) {
 
 function supportsSessionDiff(mode: TerminalSessionMode | null | undefined) {
   return mode === "codex" || mode === "claude";
+}
+
+function prepareTerminalInputForPaste(
+  value: string,
+  bracketedPasteMode: boolean,
+) {
+  const normalized = normalizeTerminalPasteText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  return prepareTerminalPasteText(normalized, bracketedPasteMode);
+}
+
+function normalizeTerminalPasteText(value: string) {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+type ResolvedTerminalComposerSendStrategy = Exclude<TerminalComposerSendStrategy, "auto">;
+
+function resolveComposerSendStrategy(
+  strategy: TerminalComposerSendStrategy,
+  canUseVisibleTerminalInput: boolean,
+): ResolvedTerminalComposerSendStrategy {
+  if (strategy === "auto") {
+    return canUseVisibleTerminalInput ? "xterm-paste-enter" : "pty-cr";
+  }
+
+  if (!canUseVisibleTerminalInput && isVisibleComposerSendStrategy(strategy)) {
+    return "pty-cr";
+  }
+
+  return strategy;
+}
+
+function isVisibleComposerSendStrategy(
+  strategy: ResolvedTerminalComposerSendStrategy,
+): strategy is
+  | "xterm-paste-enter"
+  | "xterm-paste-enter-delay"
+  | "xterm-input-cr"
+  | "xterm-char-by-char-cr"
+  | "textarea-input-enter"
+  | "textarea-paste-enter" {
+  return strategy.startsWith("xterm") || strategy.startsWith("textarea");
+}
+
+function getComposerStrategySubmitPayload(
+  strategy: ResolvedTerminalComposerSendStrategy,
+  appendNewline: boolean,
+) {
+  if (!appendNewline) {
+    return "";
+  }
+
+  return strategy === "pty-crlf" ? "\r\n" : "\r";
+}
+
+function prepareTerminalPasteText(value: string, bracketedPasteMode: boolean) {
+  if (!value) {
+    return "";
+  }
+
+  const preparedValue = value.replace(/\n/g, "\r");
+  if (!bracketedPasteMode) {
+    return preparedValue;
+  }
+
+  return `\u001b[200~${preparedValue}\u001b[201~`;
+}
+
+async function sendVisibleTerminalText({
+  appendNewline,
+  pastePayload,
+  rawText,
+  strategy,
+  terminal,
+  textarea,
+}: {
+  appendNewline: boolean;
+  pastePayload: string;
+  rawText: string;
+  strategy:
+    | "xterm-paste-enter"
+    | "xterm-paste-enter-delay"
+    | "xterm-input-cr"
+    | "xterm-char-by-char-cr"
+    | "textarea-input-enter"
+    | "textarea-paste-enter";
+  terminal: Terminal;
+  textarea: HTMLTextAreaElement;
+}) {
+  terminal.focus();
+
+  switch (strategy) {
+    case "xterm-paste-enter":
+      if (rawText) {
+        terminal.paste(rawText);
+      }
+      if (appendNewline) {
+        dispatchTerminalEnterKey(textarea);
+      }
+      return;
+
+    case "xterm-paste-enter-delay":
+      if (rawText) {
+        terminal.paste(rawText);
+      }
+      if (appendNewline) {
+        await pauseComposerSubmit(24);
+        dispatchTerminalEnterKey(textarea);
+      }
+      return;
+
+    case "xterm-input-cr":
+      if (pastePayload) {
+        terminal.input(pastePayload, true);
+      }
+      if (appendNewline) {
+        terminal.input("\r", true);
+      }
+      return;
+
+    case "xterm-char-by-char-cr":
+      for (const character of pastePayload) {
+        terminal.input(character, true);
+      }
+      if (appendNewline) {
+        terminal.input("\r", true);
+      }
+      return;
+
+    case "textarea-input-enter":
+      if (pastePayload) {
+        dispatchTerminalTextInput(textarea, pastePayload);
+      }
+      if (appendNewline) {
+        dispatchTerminalEnterKey(textarea);
+      }
+      return;
+
+    case "textarea-paste-enter":
+      if (rawText) {
+        const didDispatchPasteEvent = dispatchTerminalPasteEvent(textarea, rawText);
+        if (!didDispatchPasteEvent) {
+          terminal.paste(rawText);
+        }
+      }
+      if (appendNewline) {
+        dispatchTerminalEnterKey(textarea);
+      }
+      return;
+  }
+}
+
+function dispatchTerminalEnterKey(textarea: HTMLTextAreaElement) {
+  for (const type of ["keydown", "keypress", "keyup"] as const) {
+    const event = new KeyboardEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      code: "Enter",
+      key: "Enter",
+    });
+
+    defineKeyboardEventCode(event, "charCode", 13);
+    defineKeyboardEventCode(event, "keyCode", 13);
+    defineKeyboardEventCode(event, "which", 13);
+    textarea.dispatchEvent(event);
+  }
+}
+
+function dispatchTerminalTextInput(textarea: HTMLTextAreaElement, text: string) {
+  textarea.value = text;
+
+  if (typeof InputEvent === "function") {
+    textarea.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        cancelable: true,
+        data: text,
+        inputType: "insertText",
+      }),
+    );
+  } else {
+    const event = new Event("input", {
+      bubbles: true,
+      cancelable: true,
+    });
+    defineEventProperty(event, "data", text);
+    defineEventProperty(event, "inputType", "insertText");
+    textarea.dispatchEvent(event);
+  }
+
+  textarea.value = "";
+}
+
+function dispatchTerminalPasteEvent(textarea: HTMLTextAreaElement, text: string) {
+  if (typeof ClipboardEvent !== "function" || typeof DataTransfer !== "function") {
+    return false;
+  }
+
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", text);
+  const event = new ClipboardEvent("paste", {
+    bubbles: true,
+    cancelable: true,
+    clipboardData,
+  });
+
+  textarea.dispatchEvent(event);
+  return true;
+}
+
+function defineKeyboardEventCode(
+  event: KeyboardEvent,
+  property: "charCode" | "keyCode" | "which",
+  value: number,
+) {
+  Object.defineProperty(event, property, {
+    configurable: true,
+    get: () => value,
+  });
+}
+
+function defineEventProperty(event: Event, property: string, value: string) {
+  Object.defineProperty(event, property, {
+    configurable: true,
+    get: () => value,
+  });
+}
+
+function pauseComposerSubmit(delayMs: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
+}
+
+function createPersistedSessionsStorageKey(workingDir: string) {
+  return `vibeCliEditor.terminal.sessions.v1:${encodeURIComponent(workingDir)}`;
+}
+
+function loadPersistedTerminalState(storageKey: string) {
+  if (typeof window === "undefined") {
+    return {
+      selectedSessionId: null as string | null,
+      sessions: [] as TerminalSessionRecord[],
+    };
+  }
+
+  try {
+    const rawValue =
+      window.localStorage.getItem(storageKey) ?? window.localStorage.getItem(storageKey.replace("vibeCliEditor.", "jterminal."));
+    if (!rawValue) {
+      return {
+        selectedSessionId: null as string | null,
+        sessions: [] as TerminalSessionRecord[],
+      };
+    }
+
+    const parsedValue = JSON.parse(rawValue) as {
+      selectedSessionId?: unknown;
+      sessions?: unknown;
+    };
+
+    return {
+      selectedSessionId:
+        typeof parsedValue.selectedSessionId === "string" ? parsedValue.selectedSessionId : null,
+      sessions: Array.isArray(parsedValue.sessions)
+        ? parsedValue.sessions.filter(isPersistedTerminalSessionRecord)
+        : [],
+    };
+  } catch {
+    return {
+      selectedSessionId: null as string | null,
+      sessions: [] as TerminalSessionRecord[],
+    };
+  }
+}
+
+function persistTerminalState(
+  storageKey: string,
+  sessions: TerminalSessionRecord[],
+  selectedSessionId: string | null,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!sessions.length) {
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch {
+      // Ignore storage cleanup failures.
+    }
+    return;
+  }
+
+  const snapshot = {
+    selectedSessionId,
+    sessions,
+  };
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
+    return;
+  } catch {
+    // Fall through to a smaller snapshot to stay within storage limits.
+  }
+
+  try {
+    const fallbackSnapshot = {
+      selectedSessionId,
+      sessions: sessions.slice(-12).map((session) => ({
+        ...session,
+        output: truncatePersistedOutput(session.output, 120_000),
+      })),
+    };
+    window.localStorage.setItem(storageKey, JSON.stringify(fallbackSnapshot));
+  } catch {
+    // Ignore persistence failures and continue without saved history.
+  }
+}
+
+function restorePersistedTerminalSession(session: TerminalSessionRecord): TerminalSessionRecord {
+  if (session.status !== "active") {
+    return session;
+  }
+
+  return {
+    ...session,
+    finishedAt: session.finishedAt ?? Date.now(),
+    status: "completed",
+  };
+}
+
+function truncatePersistedOutput(output: string, maxChars: number) {
+  if (output.length <= maxChars) {
+    return output;
+  }
+
+  const head = output.slice(0, Math.floor(maxChars / 2));
+  const tail = output.slice(-Math.floor(maxChars / 2));
+  return `${head}\r\n\r\n[output truncated for persistence]\r\n\r\n${tail}`;
+}
+
+function isPersistedTerminalSessionRecord(value: unknown): value is TerminalSessionRecord {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const session = value as Partial<TerminalSessionRecord>;
+  return (
+    typeof session.id === "string" &&
+    typeof session.mode === "string" &&
+    typeof session.output === "string" &&
+    typeof session.shellKind === "string" &&
+    typeof session.startedAt === "number" &&
+    typeof session.status === "string" &&
+    typeof session.title === "string" &&
+    typeof session.workingDir === "string"
+  );
 }

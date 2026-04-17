@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="card-fill" x1="96" y1="84" x2="420" y2="432" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4C5E73" />
+      <stop offset="1" stop-color="#2C3644" />
+    </linearGradient>
+    <linearGradient id="card-border" x1="108" y1="96" x2="404" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DDF0FF" />
+      <stop offset="1" stop-color="#8FB7E8" />
+    </linearGradient>
+    <linearGradient id="card-sheen" x1="256" y1="86" x2="256" y2="214" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4FAFF" stop-opacity="0.18" />
+      <stop offset="1" stop-color="#F4FAFF" stop-opacity="0" />
+    </linearGradient>
+    <linearGradient id="logo-fill" x1="122" y1="132" x2="408" y2="388" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B7F0FF" />
+      <stop offset="0.48" stop-color="#59C0FF" />
+      <stop offset="1" stop-color="#4D80FF" />
+    </linearGradient>
+    <linearGradient id="logo-stroke" x1="130" y1="138" x2="394" y2="382" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2FBFF" />
+      <stop offset="1" stop-color="#D6E4FF" />
+    </linearGradient>
+  </defs>
+
+  <rect x="70" y="70" width="372" height="372" rx="96" fill="url(#card-fill)" />
+  <rect x="70" y="70" width="372" height="372" rx="96" stroke="url(#card-border)" stroke-opacity="0.42" stroke-width="4" />
+  <rect x="82" y="82" width="348" height="140" rx="82" fill="url(#card-sheen)" />
+
+  <path
+    d="M122 132L256 266L122 400L84 362L180 266L84 170L122 132Z"
+    fill="url(#logo-fill)"
+    stroke="url(#logo-stroke)"
+    stroke-linejoin="round"
+    stroke-width="6"
+  />
+  <path
+    d="M236 340H408V388H186L236 340Z"
+    fill="url(#logo-fill)"
+    stroke="url(#logo-stroke)"
+    stroke-linejoin="round"
+    stroke-width="6"
+  />
+</svg>

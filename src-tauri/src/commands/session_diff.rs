@@ -7,7 +7,10 @@ pub fn create_session_diff_baseline(session_id: String, root_path: String) -> Re
 }
 
 #[tauri::command]
-pub fn get_session_diff(session_id: String, root_path: String) -> Result<SessionDiffResult, String> {
+pub fn get_session_diff(
+    session_id: String,
+    root_path: String,
+) -> Result<SessionDiffResult, String> {
     session_diff::get_session_diff(&session_id, &root_path)
 }
 

@@ -13,11 +13,19 @@ use crate::models::session_diff::{
 };
 use crate::services::paths::path_to_string;
 
-const SESSION_DIFF_ROOT_DIR: &str = "jterminal-session-diff";
+const SESSION_DIFF_ROOT_DIR: &str = "vibe-cli-editor-session-diff";
 const MANIFEST_FILE_NAME: &str = "manifest.json";
 const SNAPSHOT_FILES_DIR_NAME: &str = "files";
 const MAX_DIFFABLE_TEXT_BYTES: u64 = 1_000_000;
-const IGNORED_DIR_NAMES: &[&str] = &[".git", "node_modules", "dist", "build", "target", ".next", "coverage"];
+const IGNORED_DIR_NAMES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    "coverage",
+];
 const IGNORED_DIR_PREFIXES: &[&str] = &["target-"];
 
 struct CurrentWorkspaceFile {
@@ -275,7 +283,9 @@ fn classify_file_for_baseline(
     }
 }
 
-fn collect_current_workspace_files(root: &Path) -> Result<HashMap<String, CurrentWorkspaceFile>, String> {
+fn collect_current_workspace_files(
+    root: &Path,
+) -> Result<HashMap<String, CurrentWorkspaceFile>, String> {
     let mut files = HashMap::new();
     collect_current_workspace_files_recursive(root, root, &mut files)?;
     Ok(files)
@@ -316,7 +326,10 @@ fn collect_current_workspace_files_recursive(
     Ok(())
 }
 
-fn classify_current_file(path: &Path, size: u64) -> Result<(SessionDiffContentKind, String), String> {
+fn classify_current_file(
+    path: &Path,
+    size: u64,
+) -> Result<(SessionDiffContentKind, String), String> {
     if size > MAX_DIFFABLE_TEXT_BYTES {
         return Ok((SessionDiffContentKind::TooLarge, sha256_file(path)?));
     }
@@ -425,8 +438,7 @@ fn should_skip_relative_path(relative_path: &str) -> bool {
     };
 
     segments.iter().enumerate().any(|(index, segment)| {
-        segment.starts_with('.')
-            || (index < last_index && is_ignored_dir_name(segment))
+        segment.starts_with('.') || (index < last_index && is_ignored_dir_name(segment))
     })
 }
 
@@ -445,7 +457,12 @@ fn is_ignored_dir_name(name: &str) -> bool {
 fn relative_path(root: &Path, path: &Path) -> Result<String, String> {
     diff_paths(path, root)
         .map(|value| value.to_string_lossy().replace('\\', "/"))
-        .ok_or_else(|| format!("Failed to resolve relative path for {}", path_to_string(path)))
+        .ok_or_else(|| {
+            format!(
+                "Failed to resolve relative path for {}",
+                path_to_string(path)
+            )
+        })
 }
 
 fn modified_at_ms(metadata: &fs::Metadata) -> Option<u64> {
@@ -469,7 +486,9 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
 
     loop {
-        let read_size = reader.read(&mut buffer).map_err(|error| error.to_string())?;
+        let read_size = reader
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
         if read_size == 0 {
             break;
         }

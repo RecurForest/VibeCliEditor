@@ -440,6 +440,72 @@ export function useEditor({ rootPath }: UseEditorOptions) {
     }
   }, [rootPath]);
 
+  const removePaths = useCallback((paths: string[]) => {
+    if (!paths.length) {
+      return;
+    }
+
+    const matchesPath = createPathMatcher(paths);
+
+    setTabs((currentTabs) => {
+      const nextTabs = currentTabs.filter((tab) => !matchesPath(tab.absPath));
+      tabsRef.current = nextTabs;
+      return nextTabs;
+    });
+
+    setActiveTabPath((currentActiveTabPath) => {
+      if (!currentActiveTabPath || !matchesPath(currentActiveTabPath)) {
+        return currentActiveTabPath;
+      }
+
+      const fallbackPath = tabsRef.current[tabsRef.current.length - 1]?.absPath ?? null;
+      activeTabPathRef.current = fallbackPath;
+      return fallbackPath;
+    });
+  }, []);
+
+  const renamePath = useCallback(
+    ({
+      fromPath,
+      isDir,
+      toPath,
+    }: {
+      fromPath: string;
+      isDir: boolean;
+      toPath: string;
+    }) => {
+      setTabs((currentTabs) => {
+        const nextTabs = currentTabs.map((tab) => {
+          const nextAbsPath = resolveRenamedPath(tab.absPath, fromPath, toPath, isDir);
+          if (!nextAbsPath) {
+            return tab;
+          }
+
+          return {
+            ...tab,
+            absPath: nextAbsPath,
+            name: getBaseName(nextAbsPath),
+            relPath: rootPath ? toRelativePath(rootPath, nextAbsPath) : tab.relPath,
+          };
+        });
+
+        tabsRef.current = nextTabs;
+        return nextTabs;
+      });
+
+      setActiveTabPath((currentActiveTabPath) => {
+        const nextActiveTabPath = currentActiveTabPath
+          ? resolveRenamedPath(currentActiveTabPath, fromPath, toPath, isDir) ??
+            currentActiveTabPath
+          : currentActiveTabPath;
+
+        activeTabPathRef.current = nextActiveTabPath;
+        return nextActiveTabPath;
+      });
+    },
+    [rootPath],
+  );
+
   function closeTab(absPath: string) {
     setTabs((value) => {
       const nextTabs = value.filter((tab) => tab.absPath !== absPath);
@@ -479,6 +545,8 @@ export function useEditor({ rootPath }: UseEditorOptions) {
     reloadPathsFromDisk,
     reloadCleanTabsFromDisk,
     reloadTabFromDisk,
+    removePaths,
+    renamePath,
     saveActiveFile,
     saveDirtyTabs,
     setActiveTabPath,
@@ -497,6 +565,55 @@ function upsertEditorTabs(tabs: EditorTab[], nextTab: EditorTab) {
   const nextTabs = [...tabs];
   nextTabs[index] = nextTab;
   return nextTabs;
+}
+
+function createPathMatcher(paths: string[]) {
+  const uniquePaths = Array.from(new Set(paths)).sort((left, right) => right.length - left.length);
+
+  return (candidatePath: string) =>
+    uniquePaths.some((targetPath) => isSameOrDescendantPath(candidatePath, targetPath));
+}
+
+function resolveRenamedPath(
+  candidatePath: string,
+  fromPath: string,
+  toPath: string,
+  isDir: boolean,
+) {
+  if (candidatePath === fromPath) {
+    return toPath;
+  }
+
+  if (!isDir || !isSameOrDescendantPath(candidatePath, fromPath)) {
+    return null;
+  }
+
+  return `${toPath}${candidatePath.slice(fromPath.length)}`;
+}
+
+function isSameOrDescendantPath(candidatePath: string, targetPath: string) {
+  return (
+    candidatePath === targetPath ||
+    candidatePath.startsWith(`${targetPath}\\`) ||
+    candidatePath.startsWith(`${targetPath}/`)
+  );
+}
+
+function toRelativePath(rootPath: string, absPath: string) {
+  if (absPath === rootPath) {
+    return ".";
+  }
+
+  if (absPath.startsWith(`${rootPath}\\`) || absPath.startsWith(`${rootPath}/`)) {
+    return absPath.slice(rootPath.length + 1);
+  }
+
+  return absPath;
+}
+
+function getBaseName(path: string) {
+  const normalized = path.replace(/[/\\]+$/, "");
+  return normalized.split(/[/\\]/).pop() || normalized;
 }
 
 function isMissingFileError(message: string) {

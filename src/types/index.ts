@@ -2,6 +2,45 @@ export type ShellKind = "cmd" | "powershell";
 
 export type PathInsertMode = "projectRelative" | "absolute";
 
+export type AgentProvider = "codex" | "claude";
+
+export type RuntimeModelSwitchStrategy =
+  | "provider-passthrough"
+  | "successor-session"
+  | "next-launch-only";
+
+export interface AgentSessionProfile {
+  provider: AgentProvider;
+  model?: string | null;
+  effort?: string | null;
+  profile?: string | null;
+  approvalPolicy?: string | null;
+  sandboxMode?: string | null;
+}
+
+export interface AgentSessionMeta {
+  provider: AgentProvider;
+  requestedProfile: AgentSessionProfile;
+  runtimeSessionId?: string | null;
+  runtimeModelSwitchStrategy: RuntimeModelSwitchStrategy;
+}
+
+export type ComposerTarget =
+  | {
+      kind: "shellSession";
+      sessionId: string;
+      shellKind: ShellKind;
+    }
+  | {
+      kind: "agentSession";
+      provider: AgentProvider;
+      sessionId: string;
+    }
+  | {
+      kind: "agentLauncher";
+      provider: AgentProvider | null;
+    };
+
 export interface FileNode {
   id: string;
   name: string;
@@ -31,6 +70,7 @@ export type TerminalSessionMode = "shell" | "codex" | "claude";
 export type TerminalSessionStatus = "starting" | "active" | "completed";
 
 export interface TerminalSessionRecord {
+  agent?: AgentSessionMeta | null;
   id: string;
   exitCode?: number | null;
   finishedAt?: number;
@@ -87,6 +127,7 @@ export interface ContextMenuState {
   x: number;
   y: number;
   targetPath: string;
+  targetNode: FileNode;
 }
 
 export interface EditorTab {

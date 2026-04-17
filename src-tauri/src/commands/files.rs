@@ -54,10 +54,32 @@ pub fn upsert_file(root_path: String, file_path: String, content: String) -> Res
 }
 
 #[tauri::command]
+pub fn create_directory(root_path: String, dir_path: String) -> Result<(), String> {
+    let root = PathBuf::from(root_path);
+    let dir = PathBuf::from(dir_path);
+    file_tree::create_directory(&root, &dir)
+}
+
+#[tauri::command]
 pub fn delete_file(root_path: String, file_path: String) -> Result<(), String> {
     let root = PathBuf::from(root_path);
     let file = PathBuf::from(file_path);
     file_tree::delete_file(&root, &file)
+}
+
+#[tauri::command]
+pub fn delete_path(root_path: String, target_path: String) -> Result<(), String> {
+    let root = PathBuf::from(root_path);
+    let target = PathBuf::from(target_path);
+    file_tree::delete_path(&root, &target)
+}
+
+#[tauri::command]
+pub fn rename_path(root_path: String, from_path: String, to_path: String) -> Result<(), String> {
+    let root = PathBuf::from(root_path);
+    let from = PathBuf::from(from_path);
+    let to = PathBuf::from(to_path);
+    file_tree::rename_path(&root, &from, &to)
 }
 
 #[tauri::command]
@@ -130,7 +152,7 @@ pub fn open_in_file_manager(target_path: String) -> Result<(), String> {
 }
 
 fn resolve_default_root() -> Result<PathBuf, String> {
-    if let Ok(project_root) = std::env::var("JTERMINAL_PROJECT_ROOT") {
+    if let Ok(project_root) = std::env::var("VIBE_CLI_EDITOR_PROJECT_ROOT") {
         return std::fs::canonicalize(project_root).map_err(|error| error.to_string());
     }
 

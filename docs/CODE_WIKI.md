@@ -1,4 +1,4 @@
-# Jterminal Code Wiki
+# VibeCliEditor Code Wiki
 
 这份文档面向维护者，描述当前仓库里已经落地的实现，按现有代码组织，不把设计预案写成事实。
 
@@ -6,7 +6,7 @@
 
 ## 1. 项目定位
 
-- Jterminal 是一个基于 React + Tauri 2 的桌面工作台，目标是把文件浏览、文本编辑、集成终端和 AI CLI 会话放进同一窗口。
+- VibeCliEditor 是一个基于 React + Tauri 2 的桌面工作台，目标是把文件浏览、文本编辑、集成终端和 AI CLI 会话放进同一窗口。
 - 当前主界面由五块组成：自定义标题栏、左侧 Explorer、中间编辑区、右侧多会话终端、底部状态栏。
 - 编辑区下方还可以展开一个独立的底部 `CMD` 面板，它和右侧终端不是同一个会话池。
 - 当前活跃 UI 固定使用 `cmd`；底层类型和 Rust 后端虽然支持 `powershell`，但当前主界面没有把 shell 切换入口接上。
@@ -186,7 +186,7 @@ Monaco 的集中配置模块。
 职责：
 
 - 注册 web worker。
-- 定义自定义深色主题 `jterminal-dark`。
+- 定义自定义深色主题 `vibe-cli-editor-dark`。
 - 通过扩展名推断语言类型。
 
 ### `src/components/Editor/markdown.ts`
@@ -428,7 +428,7 @@ Tauri 入口。
 各命令说明：
 
 - `get_default_root`
-  - 根据 `JTERMINAL_PROJECT_ROOT`、当前目录、是否位于 `src-tauri/` 下等规则推断默认根目录。
+  - 根据 `VIBE_CLI_EDITOR_PROJECT_ROOT`、当前目录、是否位于 `src-tauri/` 下等规则推断默认根目录。
   - 当前前端没有实际调用它。
 - `scan_working_dir`
   - 扫描工作区根节点和首层 children。
@@ -557,7 +557,7 @@ Tauri 入口。
 
 核心实现：
 
-- baseline 存储位置：系统临时目录下的 `jterminal-session-diff/<sessionId>/`
+- baseline 存储位置：系统临时目录下的 `vibe-cli-editor-session-diff/<sessionId>/`
 - 包含：
   - `manifest.json`
   - 文本文件基线副本目录 `files/`
@@ -781,3 +781,4 @@ Windows 路径兼容辅助。
 | 日期 | 说明 |
 | --- | --- |
 | 2026-04-16 | 删除原有底部履历区块，新增并重建本次履历记录。|
+1111111

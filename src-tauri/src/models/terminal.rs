@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +52,13 @@ pub struct TerminalSessionInfo {
     pub session_id: String,
     pub shell_kind: String,
     pub working_dir: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSpawnProcess {
+    pub command: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

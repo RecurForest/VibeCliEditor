@@ -1,12 +1,29 @@
 import "@xterm/xterm/css/xterm.css";
-import { History, Plus, Trash2, X } from "lucide-react";
+import { History, Plus, SquareTerminal, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type Ref } from "react";
 import type { TerminalSessionRecord } from "../../types";
+import { TerminalComposer, type TerminalComposerInsertRequest } from "./TerminalComposer";
+import type {
+  TerminalComposerSendStrategy,
+  TerminalComposerSendStrategyOption,
+} from "./terminalComposerSendStrategy";
 
 interface TerminalPaneProps {
   canLaunch: boolean;
+  composerEnabled: boolean;
+  composerExternalInsertRequest?: TerminalComposerInsertRequest | null;
+  composerPlaceholder?: string;
+  composerQuickActions?: Array<{
+    label: string;
+    text: string;
+  }>;
+  composerSendStrategy?: TerminalComposerSendStrategy;
+  composerSendStrategyOptions?: TerminalComposerSendStrategyOption[];
+  onComposerSubmit: (text: string) => Promise<void>;
+  onComposerSendStrategyChange?: (strategy: TerminalComposerSendStrategy) => void;
   containerRef: Ref<HTMLDivElement>;
   error: string | null;
+  getTerminalSelectionText: () => string;
   hasSessions: boolean;
   isSessionActive: boolean;
   onClaude: () => void;
@@ -15,11 +32,10 @@ interface TerminalPaneProps {
   onCodex: () => void;
   onCopySelection: () => Promise<boolean>;
   onFocus: () => void;
-  getTerminalSelectionText: () => string;
   onLocateSelectionFile: (selectionText: string) => Promise<void>;
-  onOpen: () => void;
   onPaste: () => Promise<void>;
   onSelectSession: (sessionId: string) => void;
+  onShell: () => void;
   selectedSession: TerminalSessionRecord | null;
   selectedSessionId: string | null;
   sessions: TerminalSessionRecord[];
@@ -28,21 +44,29 @@ interface TerminalPaneProps {
 
 export function TerminalPane({
   canLaunch,
+  composerEnabled,
+  composerExternalInsertRequest,
+  composerPlaceholder,
+  composerQuickActions,
+  composerSendStrategy,
+  composerSendStrategyOptions,
   containerRef,
   error,
+  getTerminalSelectionText,
   hasSessions,
   isSessionActive,
   onClaude,
   onClear,
   onClose,
   onCodex,
+  onComposerSendStrategyChange,
+  onComposerSubmit,
   onCopySelection,
   onFocus,
-  getTerminalSelectionText,
   onLocateSelectionFile,
-  onOpen,
   onPaste,
   onSelectSession,
+  onShell,
   selectedSession,
   selectedSessionId,
   sessions,
@@ -90,6 +114,7 @@ export function TerminalPane({
 
   const trimmedSelection = contextMenu?.selectionText.trim() ?? "";
   const canLocateSelection = Boolean(trimmedSelection);
+
   function handleViewportContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -129,7 +154,7 @@ export function TerminalPane({
       <header className="terminal__header">
         <div className="terminal__tabs">
           <span className="terminal__tab" data-active="true">
-            {selectedSession?.title ?? "TERMINAL"}
+            {selectedSession ? renderSessionLabel(selectedSession) : "TERMINAL"}
           </span>
         </div>
         <div className="terminal__actions">
@@ -152,8 +177,17 @@ export function TerminalPane({
           <button
             className="terminal__icon-button"
             disabled={!canLaunch}
-            onClick={onOpen}
+            onClick={onShell}
             title="Open shell"
+            type="button"
+          >
+            <SquareTerminal size={14} />
+          </button>
+          <button
+            className="terminal__icon-button"
+            disabled={!canLaunch}
+            onClick={onCodex}
+            title="New Codex session"
             type="button"
           >
             <Plus size={14} />
@@ -182,7 +216,7 @@ export function TerminalPane({
                     }}
                     type="button"
                   >
-                    <span className="terminal__history-item-title">{session.title}</span>
+                    <span className="terminal__history-item-title">{renderSessionLabel(session)}</span>
                     <span className="terminal__history-item-meta">
                       {formatSessionTime(session.startedAt)}
                     </span>
@@ -240,7 +274,7 @@ export function TerminalPane({
               }}
               type="button"
             >
-              定位文件
+              Locate File
             </button>
             <button
               className="context-menu__button"
@@ -251,7 +285,7 @@ export function TerminalPane({
               }}
               type="button"
             >
-              复制
+              Copy
             </button>
             <button
               className="context-menu__button"
@@ -261,11 +295,24 @@ export function TerminalPane({
               }}
               type="button"
             >
-              粘贴
+              Paste
             </button>
           </div>
         ) : null}
       </div>
+
+      {composerEnabled ? (
+        <TerminalComposer
+          canSubmit={Boolean(workingDir)}
+          externalInsertRequest={composerExternalInsertRequest}
+          onSendStrategyChange={onComposerSendStrategyChange}
+          onSubmit={onComposerSubmit}
+          placeholder={composerPlaceholder}
+          quickActions={composerQuickActions}
+          sendStrategy={composerSendStrategy}
+          sendStrategyOptions={composerSendStrategyOptions}
+        />
+      ) : null}
 
       {error ? <div className="terminal__error">{error}</div> : null}
     </aside>
@@ -277,4 +324,13 @@ function formatSessionTime(timestamp: number) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(timestamp);
+}
+
+function renderSessionLabel(session: TerminalSessionRecord) {
+  const agentModel = session.agent?.requestedProfile.model?.trim();
+  if (!agentModel) {
+    return session.title;
+  }
+
+  return `${session.title} / ${agentModel}`;
 }

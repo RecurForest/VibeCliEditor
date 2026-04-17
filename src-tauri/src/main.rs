@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    jterminal_lib::run()
+    vibe_cli_editor_lib::run()
 }

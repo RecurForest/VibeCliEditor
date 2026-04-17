@@ -70,6 +70,25 @@ pub fn upsert_file(root: &Path, file: &Path, content: String) -> Result<(), Stri
     fs::write(file, content).map_err(|error| error.to_string())
 }
 
+pub fn create_directory(root: &Path, dir: &Path) -> Result<(), String> {
+    let root = normalize_directory(root)?;
+    let dir = normalize_path(root.as_path(), dir)?;
+    ensure_within_root(&root, &dir)?;
+
+    if dir.exists() {
+        if dir.is_dir() {
+            return Ok(());
+        }
+
+        return Err(format!(
+            "Cannot create directory over file: {}",
+            dir.to_string_lossy()
+        ));
+    }
+
+    fs::create_dir_all(dir).map_err(|error| error.to_string())
+}
+
 pub fn delete_file(root: &Path, file: &Path) -> Result<(), String> {
     let root = normalize_directory(root)?;
     let file = normalize_path(root.as_path(), file)?;
@@ -89,7 +108,59 @@ pub fn delete_file(root: &Path, file: &Path) -> Result<(), String> {
     fs::remove_file(file).map_err(|error| error.to_string())
 }
 
-pub fn search_files(root: &Path, query: &str, limit: usize) -> Result<Vec<FileSearchResult>, String> {
+pub fn delete_path(root: &Path, target: &Path) -> Result<(), String> {
+    let root = normalize_directory(root)?;
+    let target = normalize_path(root.as_path(), target)?;
+    ensure_within_root(&root, &target)?;
+
+    if !target.exists() {
+        return Ok(());
+    }
+
+    if target.is_dir() {
+        return fs::remove_dir_all(target).map_err(|error| error.to_string());
+    }
+
+    fs::remove_file(target).map_err(|error| error.to_string())
+}
+
+pub fn rename_path(root: &Path, from: &Path, to: &Path) -> Result<(), String> {
+    let root = normalize_directory(root)?;
+    let from = normalize_existing_path(from)?;
+    let to = normalize_path(root.as_path(), to)?;
+    ensure_within_root(&root, &from)?;
+    ensure_within_root(&root, &to)?;
+
+    if from == root {
+        return Err(String::from("Cannot rename the workspace root."));
+    }
+
+    if to.exists() {
+        return Err(format!("Target already exists: {}", to.to_string_lossy()));
+    }
+
+    let parent = to.parent().ok_or_else(|| {
+        format!(
+            "Unable to resolve parent directory for {}",
+            to.to_string_lossy()
+        )
+    })?;
+
+    if !parent.exists() {
+        return Err(format!(
+            "Parent directory does not exist: {}",
+            parent.to_string_lossy()
+        ));
+    }
+
+    fs::rename(from, to).map_err(|error| error.to_string())
+}
+
+pub fn search_files(
+    root: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<FileSearchResult>, String> {
     let root = normalize_directory(root)?;
     let tokens = normalize_query_tokens(query);
 
@@ -341,7 +412,9 @@ fn fuzzy_score(query: &str, candidate: &str) -> Option<i64> {
     }
 
     if let Some(start_index) = candidate.find(query) {
-        return Some(8_000 - (start_index as i64 * 12) - (candidate.len() as i64 - query.len() as i64));
+        return Some(
+            8_000 - (start_index as i64 * 12) - (candidate.len() as i64 - query.len() as i64),
+        );
     }
 
     let candidate_chars = candidate.chars().collect::<Vec<_>>();

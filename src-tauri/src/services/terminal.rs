@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::env;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -10,6 +11,7 @@ use uuid::Uuid;
 
 use crate::models::terminal::{
     PathInsertMode, ShellKind, TerminalExitEvent, TerminalOutputEvent, TerminalSessionInfo,
+    TerminalSpawnProcess,
 };
 use crate::services::path_insert;
 use crate::services::paths::{path_for_shell, path_to_string};
@@ -42,6 +44,8 @@ impl TerminalState {
         cols: u16,
         rows: u16,
         shell_kind: ShellKind,
+        spawn_process: Option<TerminalSpawnProcess>,
+        startup_input: Option<String>,
         startup_command: Option<String>,
     ) -> Result<TerminalSessionInfo, String> {
         let working_dir = std::fs::canonicalize(working_dir).map_err(|error| error.to_string())?;
@@ -56,8 +60,7 @@ impl TerminalState {
             })
             .map_err(|error| error.to_string())?;
 
-        let mut command = shell_command(shell_kind);
-        command.cwd(path_for_shell(&working_dir));
+        let command = build_spawn_command(shell_kind, &working_dir, spawn_process.as_ref());
 
         let child = pty_pair
             .slave
@@ -73,8 +76,11 @@ impl TerminalState {
             .take_writer()
             .map_err(|error| error.to_string())?;
 
-        let startup_input =
-            build_startup_input(&display_working_dir, shell_kind, startup_command.as_deref());
+        let startup_input = if spawn_process.is_some() {
+            startup_input.unwrap_or_default()
+        } else {
+            build_startup_input(&display_working_dir, shell_kind, startup_command.as_deref())
+        };
         if !startup_input.is_empty() {
             writer
                 .write_all(startup_input.as_bytes())
@@ -219,6 +225,87 @@ impl TerminalState {
             .lock()
             .expect("terminal sessions mutex poisoned")
     }
+}
+
+fn build_spawn_command(
+    shell_kind: ShellKind,
+    working_dir: &Path,
+    spawn_process: Option<&TerminalSpawnProcess>,
+) -> CommandBuilder {
+    let mut command = if let Some(spawn_process) = spawn_process {
+        build_external_process_command(spawn_process)
+    } else {
+        shell_command(shell_kind)
+    };
+
+    command.cwd(path_for_shell(working_dir));
+    command
+}
+
+fn build_external_process_command(spawn_process: &TerminalSpawnProcess) -> CommandBuilder {
+    #[cfg(windows)]
+    if let Some(command) = build_windows_script_spawn_command(spawn_process) {
+        return command;
+    }
+
+    let mut command = CommandBuilder::new(&spawn_process.command);
+    for argument in &spawn_process.args {
+        command.arg(argument);
+    }
+    command
+}
+
+#[cfg(windows)]
+fn build_windows_script_spawn_command(
+    spawn_process: &TerminalSpawnProcess,
+) -> Option<CommandBuilder> {
+    let shim_path = resolve_windows_command_on_path(&spawn_process.command, "ps1")?;
+    let powershell_path = resolve_windows_command_on_path("powershell", "exe").or_else(|| {
+        let fallback = PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+        fallback.is_file().then_some(fallback)
+    })?;
+
+    let mut command = CommandBuilder::new(path_to_string(&powershell_path));
+    command.arg("-NoLogo");
+    command.arg("-NoProfile");
+    command.arg("-ExecutionPolicy");
+    command.arg("Bypass");
+    command.arg("-File");
+    command.arg(path_to_string(&shim_path));
+
+    for argument in &spawn_process.args {
+        command.arg(argument);
+    }
+
+    Some(command)
+}
+
+#[cfg(windows)]
+fn resolve_windows_command_on_path(command: &str, extension: &str) -> Option<PathBuf> {
+    let command_path = Path::new(command);
+    if command_path.is_file() {
+        return Some(command_path.to_path_buf());
+    }
+
+    let extension = extension.trim_start_matches('.');
+    let candidate_name = if command_path
+        .extension()
+        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+    {
+        command.to_string()
+    } else {
+        format!("{command}.{extension}")
+    };
+
+    let path_entries = env::var_os("PATH")?;
+    for directory in env::split_paths(&path_entries) {
+        let candidate = directory.join(&candidate_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 fn shell_command(shell_kind: ShellKind) -> CommandBuilder {

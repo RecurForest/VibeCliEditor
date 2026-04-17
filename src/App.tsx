@@ -22,17 +22,27 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { InputDialog } from "./components/Dialog/InputDialog";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { useEditor } from "./components/Editor/useEditor";
-import appIcon from "./assets/jterminal.png";
+import appIcon from "./assets/vibe-cli-editor-logo.svg";
 import { FileTree } from "./components/FileTree/FileTree";
 import { useFileTree } from "./components/FileTree/useFileTree";
 import { StatusBar } from "./components/StatusBar/StatusBar";
 import { InlineCmdTerminal } from "./components/TerminalPane/InlineCmdTerminal";
 import { TerminalPane } from "./components/TerminalPane/TerminalPane";
+import { getAgentProviderLabel, patchAgentProfile } from "./components/TerminalPane/agentSessionProfiles";
+import {
+  TERMINAL_COMPOSER_SEND_STRATEGY_OPTIONS,
+  isTerminalComposerSendStrategy,
+  type TerminalComposerSendStrategy,
+} from "./components/TerminalPane/terminalComposerSendStrategy";
+import { resolveTerminalComposerInput } from "./components/TerminalPane/terminalSlashRouter";
 import { useTerminal } from "./components/TerminalPane/useTerminal";
 import { WorkspaceFileSearch } from "./components/WorkspaceSearch/WorkspaceFileSearch";
 import type {
+  AgentProvider,
+  ComposerTarget,
   EditorTab,
   FileNode,
   FileSearchResult,
@@ -45,9 +55,19 @@ import type {
 import "./App.css";
 
 const appWindow = getCurrentWindow();
-const APP_WINDOW_TITLE = "Jterminal";
-const RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
+const APP_WINDOW_TITLE = "VibeCliEditor";
+const RECENT_FOLDERS_STORAGE_KEY = "vibeCliEditor.recentFolders";
+const LEGACY_RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
 const MAX_RECENT_FOLDERS = 8;
+const TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY = "vibeCliEditor.terminalComposer.sendStrategy";
+const LEGACY_TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY =
+  "jterminal.terminalComposer.sendStrategy";
+
+interface FileTreeInputDialogState {
+  initialValue: string;
+  placeholder: string;
+  submitLabel: string;
+}
 
 function App() {
   const [recentFolders, setRecentFolders] = useState<string[]>(() => loadRecentFolders());
@@ -58,12 +78,18 @@ function App() {
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [isInlineTerminalVisible, setIsInlineTerminalVisible] = useState(false);
+  const [terminalComposerSendStrategy, setTerminalComposerSendStrategy] =
+    useState<TerminalComposerSendStrategy>(() => loadTerminalComposerSendStrategy());
+  const [fileTreeInputDialog, setFileTreeInputDialog] = useState<FileTreeInputDialogState | null>(
+    null,
+  );
   const [sessionDiffTab, setSessionDiffTab] = useState<SessionDiffTab | null>(null);
   const [isSessionDiffTabActive, setIsSessionDiffTabActive] = useState(false);
   const shellKind: ShellKind = "cmd";
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
   const titlebarPointerPressedRef = useRef(false);
   const lastAutoRefreshAtRef = useRef(0);
+  const fileTreeInputDialogResolverRef = useRef<((value: string | null) => void) | null>(null);
 
   const editor = useEditor({
     rootPath,
@@ -97,7 +123,13 @@ function App() {
   }, []);
 
   const fileTree = useFileTree({
+    onDeletePaths: (paths) => {
+      editor.removePaths(paths);
+    },
     onResolvedRootPath: handleResolvedRootPath,
+    onRenamePath: ({ fromPath, isDir, toPath }) => {
+      editor.renamePath({ fromPath, isDir, toPath });
+    },
     onInsertPaths: async (paths) => {
       if (!rootPath) {
         return;
@@ -106,6 +138,15 @@ function App() {
       await terminal.insertPaths(paths, rootPath, "projectRelative");
     },
     onOpenFile: openEditorFile,
+    requestTextInput: ({ initialValue = "", placeholder, submitLabel }) =>
+      new Promise<string | null>((resolve) => {
+        fileTreeInputDialogResolverRef.current = resolve;
+        setFileTreeInputDialog({
+          initialValue,
+          placeholder,
+          submitLabel,
+        });
+      }),
     refreshToken,
     rootPath,
   });
@@ -230,6 +271,10 @@ function App() {
       return nextFolders;
     });
   }, [rootPath]);
+
+  useEffect(() => {
+    persistTerminalComposerSendStrategy(terminalComposerSendStrategy);
+  }, [terminalComposerSendStrategy]);
 
   useEffect(() => {
     document.title = windowTitle;
@@ -413,6 +458,20 @@ function App() {
     }
   }
 
+  const handleFileTreeInputDialogClose = useCallback((value: string | null) => {
+    fileTreeInputDialogResolverRef.current?.(value);
+    fileTreeInputDialogResolverRef.current = null;
+    setFileTreeInputDialog(null);
+  }, []);
+
+  useEffect(
+    () => () => {
+      fileTreeInputDialogResolverRef.current?.(null);
+      fileTreeInputDialogResolverRef.current = null;
+    },
+    [],
+  );
+
   function handleTitlebarMouseDown(event: ReactMouseEvent<HTMLElement>) {
     if (event.button !== 0) {
       return;
@@ -589,8 +648,99 @@ function App() {
             : sessionDiffViewButtonState === "preparing"
               ? "Building a baseline snapshot for this AI session."
               : terminal.selectedSessionDiffState?.error
-                ? terminal.selectedSessionDiffState.error
+              ? terminal.selectedSessionDiffState.error
                 : "Open changed files in the content area.";
+  const mainTerminalComposerTarget = useMemo(
+    () => getTerminalComposerTarget(terminal.selectedSession, terminal.preferredAgentProvider),
+    [terminal.preferredAgentProvider, terminal.selectedSession],
+  );
+  const mainTerminalComposerPlaceholder = useMemo(
+    () =>
+      getTerminalComposerPlaceholder(
+        terminal.selectedSession,
+        terminal.preferredAgentProvider,
+        rootPath,
+      ),
+    [rootPath, terminal.preferredAgentProvider, terminal.selectedSession],
+  );
+  const mainTerminalComposerQuickActions = useMemo(
+    () => getTerminalComposerQuickActions(terminal.selectedSession, terminal.preferredAgentProvider),
+    [terminal.preferredAgentProvider, terminal.selectedSession],
+  );
+  const mainTerminalComposerUsesTerminalSendStrategy =
+    mainTerminalComposerTarget.kind === "shellSession";
+  const handleMainTerminalComposerSubmit = useCallback(
+    async (text: string) => {
+      const resolution = resolveTerminalComposerInput({
+        pendingProfiles: terminal.pendingAgentProfiles,
+        selectedSession: terminal.selectedSession,
+        target: mainTerminalComposerTarget,
+        text,
+      });
+
+      if (resolution.kind === "reject") {
+        throw new Error(resolution.message);
+      }
+
+      if (resolution.kind === "update_pending_profile") {
+        terminal.updatePendingAgentProfile(resolution.provider, resolution.patchProfile);
+        return;
+      }
+
+      if (resolution.kind === "spawn_successor_session") {
+        await terminal.startAgentSession(resolution.profile);
+        return;
+      }
+
+      if (resolution.kind === "provider_passthrough") {
+        const activeSession = terminal.selectedSession;
+        if (!activeSession || activeSession.status !== "active") {
+          throw new Error("Select an active Claude session first.");
+        }
+
+        const baseProfile =
+          activeSession.agent?.requestedProfile ?? terminal.pendingAgentProfiles.claude;
+        await terminal.startAgentSession(patchAgentProfile(baseProfile, resolution.patchProfile), {
+          continueFromLast: true,
+          continueFromSessionId: activeSession.id,
+        });
+        await terminal.endSession(activeSession.id);
+        return;
+      }
+
+      const activeSession = terminal.selectedSession;
+      if (
+        activeSession?.status === "active" &&
+        (activeSession.mode === "codex" || activeSession.mode === "claude")
+      ) {
+        const baseProfile =
+          activeSession.agent?.requestedProfile ?? terminal.pendingAgentProfiles[activeSession.mode];
+        await terminal.startAgentSession(baseProfile, {
+          continueFromLast: true,
+          continueFromSessionId: activeSession.id,
+          prompt: resolution.text,
+        });
+        await terminal.endSession(activeSession.id);
+        return;
+      }
+
+      if (mainTerminalComposerTarget.kind === "agentLauncher" && mainTerminalComposerTarget.provider) {
+        await terminal.startAgentSession(
+          terminal.pendingAgentProfiles[mainTerminalComposerTarget.provider],
+          {
+            prompt: resolution.text,
+          },
+        );
+        return;
+      }
+
+      await terminal.sendToSelectedSession(resolution.text, {
+        appendNewline: true,
+        sendStrategy: terminalComposerSendStrategy,
+      });
+    },
+    [mainTerminalComposerTarget, terminal, terminalComposerSendStrategy],
+  );
 
   return (
     <main className="ide">
@@ -792,14 +942,21 @@ function App() {
           <Panel defaultSize={20} minSize={14}>
             <FileTree
               activeFilePath={editor.activeTab?.absPath ?? null}
+              canCreateInContextTarget={fileTree.canCreateInContextTarget}
+              canDeleteContextSelection={fileTree.canDeleteContextSelection}
               canLocateActiveFile={Boolean(editor.activeTab)}
+              canRenameContextTarget={fileTree.canRenameContextTarget}
               contextMenu={fileTree.contextMenu}
               dirtyPaths={editor.dirtyPaths}
               error={fileTree.error}
               expandedPaths={fileTree.expandedPaths}
               isLoading={fileTree.isLoading}
               loadingPaths={fileTree.loadingPaths}
+              onContextCreateFile={fileTree.createContextFile}
+              onContextCreateFolder={fileTree.createContextFolder}
+              onContextDelete={fileTree.deleteContextSelection}
               onContextOpenInFileManager={handleOpenInFileManager}
+              onContextRename={fileTree.renameContextTarget}
               onContextInsert={fileTree.insertContextSelection}
               onLocateActiveFile={handleLocateActiveFile}
               onNodeClick={fileTree.handleNodeClick}
@@ -845,11 +1002,26 @@ function App() {
                 <Panel defaultSize={34} minSize={22}>
                   <TerminalPane
                     canLaunch={terminal.canLaunch}
+                    composerEnabled={false}
+                    composerPlaceholder={mainTerminalComposerPlaceholder}
+                    composerQuickActions={mainTerminalComposerQuickActions}
+                    composerSendStrategy={
+                      mainTerminalComposerUsesTerminalSendStrategy
+                        ? terminalComposerSendStrategy
+                        : undefined
+                    }
+                    composerSendStrategyOptions={
+                      mainTerminalComposerUsesTerminalSendStrategy
+                        ? TERMINAL_COMPOSER_SEND_STRATEGY_OPTIONS
+                        : []
+                    }
                     hasSessions={terminal.hasSessions}
                     isSessionActive={terminal.isSessionActive}
                     onClaude={terminal.launchClaude}
                     onClear={terminal.clearTerminal}
                     onClose={terminal.closeTerminal}
+                    onComposerSendStrategyChange={setTerminalComposerSendStrategy}
+                    onComposerSubmit={handleMainTerminalComposerSubmit}
                     onCodex={terminal.launchCodex}
                     onCopySelection={terminal.copySelection}
                     containerRef={terminal.containerRef}
@@ -857,7 +1029,7 @@ function App() {
                     onFocus={terminal.focusTerminal}
                     getTerminalSelectionText={terminal.getSelectionText}
                     onLocateSelectionFile={handleLocateTerminalSelectionFile}
-                    onOpen={terminal.openShell}
+                    onShell={terminal.openShell}
                     onPaste={terminal.pasteFromClipboard}
                     onSelectSession={terminal.selectSession}
                     selectedSession={terminal.selectedSession}
@@ -877,6 +1049,15 @@ function App() {
         cursor={editor.cursor}
         rootPath={rootPath}
         shellKind={shellKind}
+      />
+
+      <InputDialog
+        initialValue={fileTreeInputDialog?.initialValue ?? ""}
+        isOpen={Boolean(fileTreeInputDialog)}
+        onCancel={() => handleFileTreeInputDialogClose(null)}
+        onSubmit={(value) => handleFileTreeInputDialogClose(value)}
+        placeholder={fileTreeInputDialog?.placeholder ?? ""}
+        submitLabel={fileTreeInputDialog?.submitLabel ?? "Confirm"}
       />
     </main>
   );
@@ -949,7 +1130,9 @@ function loadRecentFolders() {
   }
 
   try {
-    const rawValue = window.localStorage.getItem(RECENT_FOLDERS_STORAGE_KEY);
+    const rawValue =
+      window.localStorage.getItem(RECENT_FOLDERS_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_RECENT_FOLDERS_STORAGE_KEY);
     if (!rawValue) {
       return [];
     }
@@ -972,6 +1155,33 @@ function persistRecentFolders(paths: string[]) {
     window.localStorage.setItem(RECENT_FOLDERS_STORAGE_KEY, JSON.stringify(paths));
   } catch {
     // Ignore storage errors and continue without persistence.
+  }
+}
+
+function loadTerminalComposerSendStrategy(): TerminalComposerSendStrategy {
+  if (typeof window === "undefined") {
+    return "auto";
+  }
+
+  try {
+    const rawValue =
+      window.localStorage.getItem(TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY);
+    return isTerminalComposerSendStrategy(rawValue) ? rawValue : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+function persistTerminalComposerSendStrategy(strategy: TerminalComposerSendStrategy) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY, strategy);
+  } catch {
+    // Ignore storage failures and continue without persisting the strategy.
   }
 }
 
@@ -1219,6 +1429,110 @@ function buildWindowTitle(activeItemName: string | null | undefined, workspaceNa
   }
 
   return APP_WINDOW_TITLE;
+}
+
+function getTerminalComposerTarget(
+  selectedSession: ReturnType<typeof useTerminal>["selectedSession"],
+  preferredAgentProvider: AgentProvider,
+): ComposerTarget {
+  if (selectedSession?.status === "active") {
+    if (selectedSession.mode === "shell") {
+      return {
+        kind: "shellSession",
+        sessionId: selectedSession.id,
+        shellKind: selectedSession.shellKind,
+      };
+    }
+
+    if (selectedSession.mode === "codex" || selectedSession.mode === "claude") {
+      return {
+        kind: "agentSession",
+        provider: selectedSession.mode,
+        sessionId: selectedSession.id,
+      };
+    }
+  }
+
+  if (selectedSession?.mode === "codex" || selectedSession?.mode === "claude") {
+    return {
+      kind: "agentLauncher",
+      provider: selectedSession.mode,
+    };
+  }
+
+  return {
+    kind: "agentLauncher",
+    provider: preferredAgentProvider,
+  };
+}
+
+function getTerminalComposerPlaceholder(
+  selectedSession: ReturnType<typeof useTerminal>["selectedSession"],
+  preferredAgentProvider: AgentProvider,
+  rootPath: string | null,
+) {
+  if (!rootPath) {
+    return "Open a workspace first.";
+  }
+
+  if (!selectedSession) {
+    return `Start a shell, Codex, or Claude session. /model applies to the next ${getAgentProviderLabel(preferredAgentProvider)} launch.`;
+  }
+
+  if (selectedSession.mode === "shell") {
+    return "Send shell input. Enter sends, Shift+Enter inserts a newline.";
+  }
+
+  if (selectedSession.status !== "active") {
+    return `${getAgentProviderLabel(selectedSession.mode)} session is complete. /model updates the next launch profile.`;
+  }
+
+  if (selectedSession.mode === "claude") {
+    return "Message Claude. Enter sends. /model forwards to Claude.";
+  }
+
+  return "Message Codex. Enter sends. /model starts a successor Codex session.";
+}
+
+function getTerminalComposerQuickActions(
+  selectedSession: ReturnType<typeof useTerminal>["selectedSession"],
+  preferredAgentProvider: AgentProvider,
+) {
+  if (!selectedSession) {
+    return preferredAgentProvider === "claude"
+      ? [
+          { label: "/model", text: "/model " },
+          { label: "Explain", text: "Explain the current codebase issue." },
+          { label: "Fix", text: "Fix the current issue." },
+        ]
+      : [
+          { label: "/model", text: "/model " },
+          { label: "Review", text: "Review the latest changes." },
+          { label: "Build", text: "Investigate the current build issue." },
+        ];
+  }
+
+  if (selectedSession.mode === "shell") {
+    return [
+      { label: "git status", text: "git status" },
+      { label: "pnpm build", text: "pnpm build" },
+      { label: "dir", text: "dir" },
+    ];
+  }
+
+  if (selectedSession.mode === "claude") {
+    return [
+      { label: "/model", text: "/model " },
+      { label: "Explain", text: "Explain the current issue." },
+      { label: "Fix", text: "Fix the current issue." },
+    ];
+  }
+
+  return [
+    { label: "/model", text: "/model " },
+    { label: "Review", text: "Review the current changes." },
+    { label: "Implement", text: "Implement the requested change." },
+  ];
 }
 
 function createSessionDiffTab(result: SessionDiffResult, sessionTitle: string): SessionDiffTab {

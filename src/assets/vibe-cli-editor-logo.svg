@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="logo-fill" x1="42" y1="94" x2="456" y2="456" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B7F0FF" />
+      <stop offset="0.48" stop-color="#59C0FF" />
+      <stop offset="1" stop-color="#4D80FF" />
+    </linearGradient>
+    <linearGradient id="logo-stroke" x1="54" y1="100" x2="434" y2="454" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2FBFF" stop-opacity="0.88" />
+      <stop offset="0.55" stop-color="#CAE9FF" stop-opacity="0.58" />
+      <stop offset="1" stop-color="#D8E3FF" stop-opacity="0.72" />
+    </linearGradient>
+    <filter id="logo-glow" x="-12%" y="-12%" width="124%" height="124%">
+      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#76DBFF" flood-opacity="0.26" />
+      <feDropShadow dx="0" dy="2" stdDeviation="8" flood-color="#5A84FF" flood-opacity="0.24" />
+    </filter>
+  </defs>
+
+  <g filter="url(#logo-glow)">
+    <path
+      d="M73 96L250 273L73 450L24 401L152 273L24 145L73 96Z"
+      fill="url(#logo-fill)"
+      stroke="url(#logo-stroke)"
+      stroke-linejoin="round"
+      stroke-width="6"
+    />
+    <path
+      d="M222 388H456V450H154L222 388Z"
+      fill="url(#logo-fill)"
+      stroke="url(#logo-stroke)"
+      stroke-linejoin="round"
+      stroke-width="6"
+    />
+  </g>
+</svg>

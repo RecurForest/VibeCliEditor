@@ -6,13 +6,20 @@ import type { ContextMenuState, FileNode } from "../../types";
 interface FileTreeProps {
   activeFilePath: string | null;
   canLocateActiveFile: boolean;
+  canCreateInContextTarget: boolean;
+  canDeleteContextSelection: boolean;
+  canRenameContextTarget: boolean;
   contextMenu: ContextMenuState | null;
   dirtyPaths: string[];
   error: string | null;
   expandedPaths: string[];
   isLoading: boolean;
   loadingPaths: string[];
+  onContextCreateFile: () => Promise<void>;
+  onContextCreateFolder: () => Promise<void>;
+  onContextDelete: () => Promise<void>;
   onContextOpenInFileManager: (targetPath: string) => Promise<void>;
+  onContextRename: () => Promise<void>;
   onContextInsert: () => Promise<void>;
   onLocateActiveFile: () => Promise<void>;
   onNodeClick: (node: FileNode, additive: boolean) => void;
@@ -27,13 +34,20 @@ interface FileTreeProps {
 export function FileTree({
   activeFilePath,
   canLocateActiveFile,
+  canCreateInContextTarget,
+  canDeleteContextSelection,
+  canRenameContextTarget,
   contextMenu,
   dirtyPaths,
   error,
   expandedPaths,
   isLoading,
   loadingPaths,
+  onContextCreateFile,
+  onContextCreateFolder,
+  onContextDelete,
   onContextOpenInFileManager,
+  onContextRename,
   onContextInsert,
   onLocateActiveFile,
   onNodeClick,
@@ -147,6 +161,38 @@ export function FileTree({
             type="button"
           >
             Open in Explorer
+          </button>
+          <button
+            className="context-menu__button"
+            disabled={!canCreateInContextTarget}
+            onClick={() => void onContextCreateFile()}
+            type="button"
+          >
+            New File
+          </button>
+          <button
+            className="context-menu__button"
+            disabled={!canCreateInContextTarget}
+            onClick={() => void onContextCreateFolder()}
+            type="button"
+          >
+            New Folder
+          </button>
+          <button
+            className="context-menu__button"
+            disabled={!canRenameContextTarget}
+            onClick={() => void onContextRename()}
+            type="button"
+          >
+            Rename
+          </button>
+          <button
+            className="context-menu__button"
+            disabled={!canDeleteContextSelection}
+            onClick={() => void onContextDelete()}
+            type="button"
+          >
+            Delete
           </button>
         </div>
       ) : null}

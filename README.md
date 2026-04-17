@@ -1,14 +1,14 @@
-# Jterminal
+# VibeCliEditor
 
 English | [简体中文](./README.zh-CN.md)
 
 <p align="center">
-  <img src="src/assets/jterminal.png" alt="Jterminal logo" width="96" />
+  <img src="src/assets/vibe-cli-editor-logo.svg" alt="VibeCliEditor logo" width="96" />
 </p>
 
 <p align="center">
-  <strong>Jterminal's defining feature is its AI session diff workflow.</strong>
-  In vibe coding with <code>codex</code> or Claude Code (<code>claude</code>), the hard part is not only generating code, but being able to review what the agent changed and safely roll it back. Jterminal makes those terminal-driven changes visible, reviewable, and reversible inside one workspace.
+  <strong>VibeCliEditor's defining feature is its AI session diff workflow.</strong>
+  In vibe coding with <code>codex</code> or Claude Code (<code>claude</code>), the hard part is not only generating code, but being able to review what the agent changed and safely roll it back. VibeCliEditor makes those terminal-driven changes visible, reviewable, and reversible inside one workspace.
 </p>
 
 <p align="center">
@@ -16,11 +16,11 @@ English | [简体中文](./README.zh-CN.md)
 </p>
 
 <p align="center">
-  Jterminal also combines the file tree, editor, integrated terminal, and AI CLI entry points into one desktop workspace so you can browse files, select targets, inspect diffs, and insert file paths into the terminal workflow without constantly switching contexts.
+  VibeCliEditor also combines the file tree, editor, integrated terminal, and AI CLI entry points into one desktop workspace so you can browse files, select targets, inspect diffs, and insert file paths into the terminal workflow without constantly switching contexts.
 </p>
 
 <p align="center">
-  <img src="public/jterminal-snapshot.png" alt="Jterminal snapshot" width="100%" />
+  <img src="public/vibe-cli-editor-snapshot.png" alt="VibeCliEditor snapshot" width="100%" />
 </p>
 
 > Core intent: make `codex` / Claude Code sessions auditable and reversible, while also making it much easier to bring the right project files into an AI-driven development loop.
@@ -33,7 +33,7 @@ In a normal terminal workflow, AI CLI tools are strong at generating and editing
 - deciding which file or directory should be referenced next
 - quickly feeding those paths back into the terminal prompt
 
-Jterminal is built around that gap. The session diff workflow solves the review and rollback problem, while the Explorer, workspace search, and terminal integration make it much easier to find files and feed the right paths back into the active AI session.
+VibeCliEditor is built around that gap. The session diff workflow solves the review and rollback problem, while the Explorer, workspace search, and terminal integration make it much easier to find files and feed the right paths back into the active AI session.
 
 ## Features
 
@@ -68,7 +68,7 @@ The current project is closer to a focused desktop coding workspace than a full 
 ## Project Structure
 
 ```text
-Jterminal/
+VibeCliEditor/
 |-- src/                # React frontend
 |-- src-tauri/          # Tauri + Rust backend
 |-- public/             # Static assets
@@ -130,7 +130,7 @@ Make sure these commands are available in your local `PATH` if you want to use t
 
 The repository includes `scripts/run-tauri.mjs` to help normalize local Tauri execution, including:
 
-- injecting `JTERMINAL_PROJECT_ROOT`
+- injecting `VIBE_CLI_EDITOR_PROJECT_ROOT`
 - using an isolated Cargo target directory
 - reducing stale process issues on Windows
 

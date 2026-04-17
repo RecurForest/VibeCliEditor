@@ -1,6 +1,9 @@
 use tauri::{AppHandle, State};
 
-use crate::models::terminal::{PathInsertMode, ShellKind, TerminalSessionInfo};
+use crate::models::terminal::{
+    PathInsertMode, ShellKind, TerminalSessionInfo, TerminalSpawnProcess,
+};
+use crate::services::agent_sessions;
 use crate::services::terminal::TerminalState;
 
 #[tauri::command]
@@ -11,6 +14,8 @@ pub fn start_terminal(
     cols: u16,
     rows: u16,
     shell_kind: String,
+    spawn_process: Option<TerminalSpawnProcess>,
+    startup_input: Option<String>,
     startup_command: Option<String>,
 ) -> Result<TerminalSessionInfo, String> {
     state.start_session(
@@ -19,7 +24,22 @@ pub fn start_terminal(
         cols,
         rows,
         ShellKind::try_from(shell_kind)?,
+        spawn_process,
+        startup_input,
         startup_command,
+    )
+}
+
+#[tauri::command]
+pub fn resolve_codex_session_id(
+    working_dir: String,
+    started_at_ms: i64,
+    timeout_ms: Option<u64>,
+) -> Result<Option<String>, String> {
+    agent_sessions::resolve_codex_session_id(
+        &working_dir,
+        started_at_ms,
+        timeout_ms.unwrap_or(5_000),
     )
 }
 

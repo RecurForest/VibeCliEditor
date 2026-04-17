@@ -27,7 +27,7 @@ env.CARGO_TARGET_DIR = cargoTargetDir;
 env.CARGO_BUILD_JOBS = "1";
 env.CARGO_INCREMENTAL = "0";
 env.CARGO_BUILD_PIPELINING = "false";
-env.JTERMINAL_PROJECT_ROOT = projectRoot;
+env.VIBE_CLI_EDITOR_PROJECT_ROOT = projectRoot;
 
 if (process.platform === "win32" && command === "dev") {
   cleanupWindowsDevProcesses();
@@ -49,7 +49,7 @@ child.on("exit", (code, signal) => {
 });
 
 function cleanupWindowsDevProcesses() {
-  const targetExe = join(cargoTargetDir, "debug", "jterminal.exe");
+  const targetExe = join(cargoTargetDir, "debug", "VibeCliEditor.exe");
   const viteEntry = join(projectRoot, "node_modules", "vite", "bin", "vite.js");
   const projectRootPath = projectRoot;
 

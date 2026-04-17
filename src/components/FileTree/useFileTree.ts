@@ -4,19 +4,33 @@ import type { ContextMenuState, FileNode } from "../../types";
 import { replaceNodeChildren } from "../../utils/tree";
 
 interface UseFileTreeOptions {
-  onResolvedRootPath?: (rootPath: string) => void;
-  rootPath: string | null;
-  refreshToken: number;
+  onDeletePaths?: (paths: string[]) => Promise<void> | void;
   onInsertPaths: (paths: string[]) => Promise<void>;
   onOpenFile: (node: FileNode) => Promise<void> | void;
+  onRenamePath?: (payload: {
+    fromPath: string;
+    isDir: boolean;
+    toPath: string;
+  }) => Promise<void> | void;
+  onResolvedRootPath?: (rootPath: string) => void;
+  refreshToken: number;
+  requestTextInput?: (options: {
+    initialValue?: string;
+    placeholder: string;
+    submitLabel: string;
+  }) => Promise<string | null>;
+  rootPath: string | null;
 }
 
 export function useFileTree({
-  onResolvedRootPath,
-  rootPath,
-  refreshToken,
+  onDeletePaths,
   onInsertPaths,
   onOpenFile,
+  onRenamePath,
+  onResolvedRootPath,
+  refreshToken,
+  requestTextInput,
+  rootPath,
 }: UseFileTreeOptions) {
   const [rootNode, setRootNode] = useState<FileNode | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
@@ -25,11 +39,13 @@ export function useFileTree({
   const [error, setError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [localRefreshToken, setLocalRefreshToken] = useState(0);
 
   const previousRootPathRef = useRef<string | null>(null);
   const rootNodeRef = useRef<FileNode | null>(null);
   const expandedPathsRef = useRef<string[]>([]);
   const selectedPathsRef = useRef<string[]>([]);
+  const pendingReloadResolversRef = useRef<Array<() => void>>([]);
 
   useEffect(() => {
     rootNodeRef.current = rootNode;
@@ -55,6 +71,7 @@ export function useFileTree({
         setError(null);
         setIsLoading(false);
         previousRootPathRef.current = null;
+        flushPendingReloads(pendingReloadResolversRef);
         return;
       }
 
@@ -77,30 +94,37 @@ export function useFileTree({
       setIsLoading(true);
 
       try {
-        const node = await invoke<FileNode>("scan_working_dir", { rootPath });
-        let nextTree = node;
+        const nextRootNode = await invoke<FileNode>("scan_working_dir", { rootPath });
+        let nextTree = nextRootNode;
         const nextExpandedPaths = mergeUniquePaths(
-          [node.absPath],
-          preservedExpandedPaths.filter((path) => path !== node.absPath),
+          [nextRootNode.absPath],
+          preservedExpandedPaths.filter((path) => path !== nextRootNode.absPath),
         );
 
-        nextTree = await hydrateExpandedDirectories(nextTree, node.absPath, nextExpandedPaths, setLoadingPaths);
+        nextTree = await hydrateExpandedDirectories(
+          nextTree,
+          nextRootNode.absPath,
+          nextExpandedPaths,
+          setLoadingPaths,
+        );
 
         if (cancelled) {
           return;
         }
 
         const validExpandedPaths = nextExpandedPaths.filter(
-          (path) => path === node.absPath || Boolean(findNodeByPath(nextTree, path)),
+          (path) => path === nextRootNode.absPath || Boolean(findNodeByPath(nextTree, path)),
         );
-        const validSelectedPaths = preservedSelectedPaths.filter((path) => Boolean(findNodeByPath(nextTree, path)));
+        const validSelectedPaths = preservedSelectedPaths.filter((path) =>
+          Boolean(findNodeByPath(nextTree, path)),
+        );
 
         rootNodeRef.current = nextTree;
-        previousRootPathRef.current = node.absPath;
+        previousRootPathRef.current = nextRootNode.absPath;
         setRootNode(nextTree);
         setExpandedPaths(validExpandedPaths);
         setSelectedPaths(validSelectedPaths);
-        onResolvedRootPath?.(node.absPath);
+        onResolvedRootPath?.(nextRootNode.absPath);
       } catch (reason) {
         if (!cancelled) {
           setError(reason instanceof Error ? reason.message : String(reason));
@@ -109,6 +133,7 @@ export function useFileTree({
         if (!cancelled) {
           setIsLoading(false);
           setLoadingPaths([]);
+          flushPendingReloads(pendingReloadResolversRef);
         }
       }
     }
@@ -118,7 +143,7 @@ export function useFileTree({
     return () => {
       cancelled = true;
     };
-  }, [onResolvedRootPath, refreshToken, rootPath]);
+  }, [localRefreshToken, onResolvedRootPath, refreshToken, rootPath]);
 
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
@@ -196,6 +221,7 @@ export function useFileTree({
   function handleNodeContextMenu(node: FileNode, x: number, y: number) {
     setSelectedPaths((value) => (value.includes(node.absPath) ? value : [node.absPath]));
     setContextMenu({
+      targetNode: node,
       targetPath: node.absPath,
       x,
       y,
@@ -237,6 +263,192 @@ export function useFileTree({
     try {
       await onInsertPaths(selectedPaths);
       setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  function requestReload() {
+    return new Promise<void>((resolve) => {
+      pendingReloadResolversRef.current.push(resolve);
+      setLocalRefreshToken((value) => value + 1);
+    });
+  }
+
+  async function createContextItem(kind: "file" | "folder") {
+    const targetNode = contextMenu?.targetNode;
+    if (!rootPath || !targetNode?.isDir) {
+      return;
+    }
+
+    const label = kind === "file" ? "file" : "folder";
+    const rawName = requestTextInput
+      ? await requestTextInput({
+          placeholder: kind === "file" ? "File name" : "Folder name",
+          submitLabel: kind === "file" ? "Create File" : "Create Folder",
+        })
+      : window.prompt(`New ${label}`, "");
+    if (rawName === null) {
+      setContextMenu(null);
+      return;
+    }
+
+    const nextName = rawName.trim();
+    if (!nextName) {
+      setError(`Enter a ${label} name.`);
+      return;
+    }
+
+    if (!isValidNodeName(nextName)) {
+      setError(`${label} names cannot include path separators.`);
+      return;
+    }
+
+    const nextPath = joinPath(targetNode.absPath, nextName);
+
+    try {
+      if (kind === "file") {
+        await invoke("upsert_file", {
+          content: "",
+          filePath: nextPath,
+          rootPath,
+        });
+      } else {
+        await invoke("create_directory", {
+          dirPath: nextPath,
+          rootPath,
+        });
+      }
+
+      setContextMenu(null);
+      setError(null);
+      await requestReload();
+      await revealPath(nextPath);
+
+      if (kind === "file") {
+        const createdNode = findNodeByPath(rootNodeRef.current, nextPath);
+        await onOpenFile(
+          createdNode ?? {
+            absPath: nextPath,
+            children: undefined,
+            hasChildren: false,
+            id: nextPath,
+            isDir: false,
+            name: nextName,
+            relPath: toRelativePath(rootPath, nextPath),
+          },
+        );
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  async function renameContextTarget() {
+    const targetNode = contextMenu?.targetNode;
+    const workspaceRootPath = rootNodeRef.current?.absPath ?? rootPath;
+    if (!rootPath || !targetNode || isWorkspaceRootPath(targetNode.absPath, workspaceRootPath)) {
+      return;
+    }
+
+    const rawName = requestTextInput
+      ? await requestTextInput({
+          initialValue: targetNode.name,
+          placeholder: targetNode.isDir ? "Folder name" : "File name",
+          submitLabel: "Save",
+        })
+      : window.prompt(targetNode.isDir ? "Rename folder" : "Rename file", targetNode.name);
+    if (rawName === null) {
+      setContextMenu(null);
+      return;
+    }
+
+    const nextName = rawName.trim();
+    if (!nextName) {
+      setError("Enter a new name.");
+      return;
+    }
+
+    if (!isValidNodeName(nextName)) {
+      setError("Names cannot include path separators.");
+      return;
+    }
+
+    if (nextName === targetNode.name) {
+      setContextMenu(null);
+      return;
+    }
+
+    const parentPath = getParentPath(targetNode.absPath);
+    if (!parentPath) {
+      setError("Unable to resolve the parent directory.");
+      return;
+    }
+
+    const nextPath = joinPath(parentPath, nextName);
+
+    try {
+      await invoke("rename_path", {
+        fromPath: targetNode.absPath,
+        rootPath,
+        toPath: nextPath,
+      });
+      await onRenamePath?.({
+        fromPath: targetNode.absPath,
+        isDir: targetNode.isDir,
+        toPath: nextPath,
+      });
+
+      setContextMenu(null);
+      setError(null);
+      await requestReload();
+      await revealPath(nextPath);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  async function deleteContextSelection() {
+    if (!rootPath || !contextMenu) {
+      return;
+    }
+
+    const workspaceRootPath = rootNodeRef.current?.absPath ?? rootPath;
+    const targetPaths = collapseDeleteTargets(
+      (selectedPathsRef.current.includes(contextMenu.targetPath)
+        ? selectedPathsRef.current
+        : [contextMenu.targetPath]
+      ).filter((path) => !isWorkspaceRootPath(path, workspaceRootPath)),
+    );
+
+    if (!targetPaths.length) {
+      return;
+    }
+
+    const confirmMessage =
+      targetPaths.length === 1
+        ? `Delete "${getBaseName(targetPaths[0])}"?`
+        : `Delete ${targetPaths.length} selected items?`;
+
+    if (!window.confirm(confirmMessage)) {
+      setContextMenu(null);
+      return;
+    }
+
+    try {
+      await Promise.all(
+        targetPaths.map((targetPath) =>
+          invoke("delete_path", {
+            rootPath,
+            targetPath,
+          }),
+        ),
+      );
+      await onDeletePaths?.(targetPaths);
+
+      setContextMenu(null);
+      setError(null);
+      await requestReload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -284,18 +496,37 @@ export function useFileTree({
     setContextMenu(null);
   }
 
+  const workspaceRootPath = rootNodeRef.current?.absPath ?? rootPath;
+  const contextSelectionPaths = contextMenu
+    ? selectedPaths.includes(contextMenu.targetPath)
+      ? selectedPaths
+      : [contextMenu.targetPath]
+    : [];
+  const deletableContextPaths = collapseDeleteTargets(
+    contextSelectionPaths.filter((path) => !isWorkspaceRootPath(path, workspaceRootPath)),
+  );
+
   return {
+    canCreateInContextTarget: Boolean(contextMenu?.targetNode.isDir),
+    canDeleteContextSelection: deletableContextPaths.length > 0,
+    canRenameContextTarget: Boolean(
+      contextMenu && !isWorkspaceRootPath(contextMenu.targetPath, workspaceRootPath),
+    ),
     closeContextMenu: () => setContextMenu(null),
     contextMenu,
+    createContextFile: () => createContextItem("file"),
+    createContextFolder: () => createContextItem("folder"),
+    deleteContextSelection,
     error,
     expandedPaths,
     handleNodeClick,
     handleNodeContextMenu,
-    insertSelection,
     insertContextSelection,
+    insertSelection,
     isLoading,
     loadingPaths,
     quickInsert,
+    renameContextTarget,
     revealPath,
     rootNode,
     selectedPaths,
@@ -337,7 +568,11 @@ async function hydrateExpandedDirectories(
   return nextTree;
 }
 
-function findNodeByPath(node: FileNode, targetPath: string): FileNode | null {
+function findNodeByPath(node: FileNode | null, targetPath: string): FileNode | null {
+  if (!node) {
+    return null;
+  }
+
   if (node.absPath === targetPath) {
     return node;
   }
@@ -377,9 +612,63 @@ function getParentPath(path: string) {
 function isPathWithinRoot(path: string, rootPath: string) {
   const normalizedPath = path.toLowerCase();
   const normalizedRoot = rootPath.toLowerCase();
-  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}\\`) || normalizedPath.startsWith(`${normalizedRoot}/`);
+  return (
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(`${normalizedRoot}\\`) ||
+    normalizedPath.startsWith(`${normalizedRoot}/`)
+  );
 }
 
 function mergeUniquePaths(paths: string[], nextPaths: string[]) {
   return Array.from(new Set([...paths, ...nextPaths]));
+}
+
+function flushPendingReloads(resolversRef: { current: Array<() => void> }) {
+  const resolvers = resolversRef.current;
+  resolversRef.current = [];
+
+  for (const resolve of resolvers) {
+    resolve();
+  }
+}
+
+function isValidNodeName(name: string) {
+  return !/[\\/]/.test(name);
+}
+
+function joinPath(basePath: string, name: string) {
+  const separator = basePath.includes("\\") ? "\\" : "/";
+  return `${basePath.replace(/[/\\]+$/, "")}${separator}${name}`;
+}
+
+function toRelativePath(rootPath: string, absPath: string) {
+  if (absPath === rootPath) {
+    return ".";
+  }
+
+  if (absPath.startsWith(`${rootPath}\\`) || absPath.startsWith(`${rootPath}/`)) {
+    return absPath.slice(rootPath.length + 1);
+  }
+
+  return absPath;
+}
+
+function collapseDeleteTargets(paths: string[]) {
+  const uniquePaths = Array.from(new Set(paths)).sort((left, right) => left.length - right.length);
+
+  return uniquePaths.filter(
+    (path, index) =>
+      !uniquePaths
+        .slice(0, index)
+        .some((parentPath) => path === parentPath || isPathWithinRoot(path, parentPath)),
+  );
+}
+
+function isWorkspaceRootPath(path: string, workspaceRootPath: string | null) {
+  return Boolean(workspaceRootPath && path === workspaceRootPath);
+}
+
+function getBaseName(path: string) {
+  const normalized = path.replace(/[/\\]+$/, "");
+  return normalized.split(/[/\\]/).pop() || normalized;
 }
