@@ -151,10 +151,7 @@ function App() {
     rootPath,
   });
 
-  const terminalLaunchDir = useMemo(
-    () => resolveTerminalLaunchDir(rootPath, fileTree.rootNode, fileTree.selectedPaths),
-    [rootPath, fileTree.rootNode, fileTree.selectedPaths],
-  );
+  const terminalLaunchDir = rootPath;
 
   const terminal = useTerminal({
     launchDir: terminalLaunchDir,
@@ -1079,49 +1076,6 @@ async function runWindowAction(label: string, action: () => Promise<void>) {
   } catch (error) {
     console.error(`[window] Failed to ${label}.`, error);
   }
-}
-
-function resolveTerminalLaunchDir(
-  rootPath: string | null,
-  rootNode: FileNode | null,
-  selectedPaths: string[],
-) {
-  if (!rootPath) {
-    return null;
-  }
-
-  const selectedPath = selectedPaths[0];
-  if (!selectedPath || !rootNode) {
-    return rootPath;
-  }
-
-  const node = findNodeByPath(rootNode, selectedPath);
-  if (!node) {
-    return rootPath;
-  }
-
-  return node.isDir ? node.absPath : getParentPath(node.absPath) ?? rootPath;
-}
-
-function findNodeByPath(node: FileNode, targetPath: string): FileNode | null {
-  if (node.absPath === targetPath) {
-    return node;
-  }
-
-  for (const child of node.children ?? []) {
-    const match = findNodeByPath(child, targetPath);
-    if (match) {
-      return match;
-    }
-  }
-
-  return null;
-}
-
-function getParentPath(path: string) {
-  const normalized = path.replace(/[/\\]+$/, "");
-  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-  return separatorIndex > 0 ? normalized.slice(0, separatorIndex) : null;
 }
 
 function loadRecentFolders() {
