@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isImageFile, isSvgFile } from "../FileIcon/FileIcon";
 import type { CursorPosition, EditorTab, FileNode } from "../../types";
 
 interface UseEditorOptions {
@@ -53,25 +54,15 @@ export function useEditor({ rootPath }: UseEditorOptions) {
     }
 
     const existing = tabsRef.current.find((tab) => tab.absPath === node.absPath);
-    if (existing && !existing.isReadOnly) {
-      await activateTab(existing.absPath, { syncFromDisk: true });
+    if (existing && existing.contentKind !== "image") {
+      await activateTab(existing.absPath, existing.isReadOnly ? undefined : { syncFromDisk: true });
       return;
     }
 
     try {
-      const content = await invoke<string>("read_file", {
-        filePath: node.absPath,
-        rootPath,
-      });
-
-      const tab: EditorTab = {
-        absPath: node.absPath,
-        content,
-        isReadOnly: false,
-        name: node.name,
-        relPath: node.relPath,
-        savedContent: content,
-      };
+      const tab = isPreviewOnlyImageFile(node.name)
+        ? await createImagePreviewTab(node, rootPath)
+        : await createTextEditorTab(node, rootPath);
 
       const nextTabs = upsertEditorTabs(tabsRef.current, tab);
       tabsRef.current = nextTabs;
@@ -88,6 +79,7 @@ export function useEditor({ rootPath }: UseEditorOptions) {
   const openVirtualFile = useCallback((tab: EditorTab) => {
     const nextTab: EditorTab = {
       ...tab,
+      contentKind: tab.contentKind ?? "text",
       isReadOnly: tab.isReadOnly ?? true,
       savedContent: tab.savedContent ?? tab.content,
     };
@@ -618,4 +610,42 @@ function getBaseName(path: string) {
 
 function isMissingFileError(message: string) {
   return /not found|cannot find|os error [23]|系统找不到指定的文件/i.test(message);
+}
+
+function isPreviewOnlyImageFile(fileName: string) {
+  return isImageFile(fileName) && !isSvgFile(fileName);
+}
+
+async function createTextEditorTab(node: FileNode, rootPath: string): Promise<EditorTab> {
+  const content = await invoke<string>("read_file", {
+    filePath: node.absPath,
+    rootPath,
+  });
+
+  return {
+    absPath: node.absPath,
+    content,
+    contentKind: "text",
+    isReadOnly: false,
+    name: node.name,
+    relPath: node.relPath,
+    savedContent: content,
+  };
+}
+
+async function createImagePreviewTab(node: FileNode, rootPath: string): Promise<EditorTab> {
+  const content = await invoke<string>("read_media_file_data_url", {
+    filePath: node.absPath,
+    rootPath,
+  });
+
+  return {
+    absPath: node.absPath,
+    content,
+    contentKind: "image",
+    isReadOnly: true,
+    name: node.name,
+    relPath: node.relPath,
+    savedContent: content,
+  };
 }

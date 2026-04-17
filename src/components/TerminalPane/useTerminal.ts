@@ -999,9 +999,6 @@ export function useTerminal({
     ) => {
       const normalizedProfile = cloneAgentProfile(profile);
       updatePendingAgentProfile(normalizedProfile.provider, normalizedProfile);
-      const targetDir = launchDir ?? workingDir;
-      const codexLaunchStartedAt =
-        normalizedProfile.provider === "codex" && !continueFromLast ? Date.now() : null;
       let runtimeSessionId: string | null = null;
 
       if (normalizedProfile.provider === "codex" && continueFromLast) {
@@ -1039,26 +1036,12 @@ export function useTerminal({
         title: getAgentProviderLabel(normalizedProfile.provider),
       });
 
-      if (normalizedProfile.provider === "codex" && !runtimeSessionId && targetDir) {
-        void resolveCodexRuntimeSessionId(targetDir, codexLaunchStartedAt ?? Date.now())
-          .then((resolvedRuntimeSessionId) => {
-            if (resolvedRuntimeSessionId) {
-              setSessionRuntimeSessionId(nextSessionId, resolvedRuntimeSessionId);
-            }
-          })
-          .catch(() => undefined);
-      }
-
       return nextSessionId;
     },
     [
       ensureCodexRuntimeSessionId,
-      launchDir,
-      resolveCodexRuntimeSessionId,
-      setSessionRuntimeSessionId,
       startSession,
       updatePendingAgentProfile,
-      workingDir,
     ],
   );
 

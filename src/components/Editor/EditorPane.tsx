@@ -18,7 +18,7 @@ import {
 import type { editor, IDisposable } from "monaco-editor";
 import type { SessionDiffTab, WorkbenchTab } from "../../types";
 import { DiffViewerPane } from "../DiffViewer/DiffViewerPane";
-import { FileIcon, isMarkdownFile } from "../FileIcon/FileIcon";
+import { FileIcon, isMarkdownFile, isSvgFile } from "../FileIcon/FileIcon";
 import { renderMarkdown } from "./markdown";
 import { MONACO_THEME, resolveEditorLanguage } from "./monaco";
 
@@ -48,7 +48,7 @@ export function EditorPane({
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const cursorListenerRef = useRef<IDisposable | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
-  const markdownRef = useRef<HTMLElement | null>(null);
+  const markdownRef = useRef<HTMLDivElement | null>(null);
   const markdownScrollTopByPathRef = useRef<Record<string, number>>({});
   const [previewByPath, setPreviewByPath] = useState<Record<string, boolean>>({});
   const activeEditorTab = activeTab && !isSessionDiffTab(activeTab) ? activeTab : null;
@@ -68,12 +68,23 @@ export function EditorPane({
     );
   }, [activeTab]);
   const markdownEnabled = isMarkdownFile(activeEditorTab?.name);
-  const isPreviewMode = Boolean(
+  const svgEnabled = isSvgFile(activeEditorTab?.name);
+  const supportsTogglePreview = Boolean(
+    activeEditorTab && activeEditorTab.contentKind !== "image" && (markdownEnabled || svgEnabled),
+  );
+  const isImagePreview = activeEditorTab?.contentKind === "image";
+  const isMarkdownPreview = Boolean(
     activeEditorTab && markdownEnabled && previewByPath[activeEditorTab.absPath],
   );
+  const isSvgPreview = Boolean(activeEditorTab && svgEnabled && previewByPath[activeEditorTab.absPath]);
+  const isPreviewMode = isImagePreview || isMarkdownPreview || isSvgPreview;
   const markdownHtml = useMemo(
-    () => (activeEditorTab && isPreviewMode ? renderMarkdown(activeEditorTab.content) : ""),
-    [activeEditorTab, isPreviewMode],
+    () => (activeEditorTab && isMarkdownPreview ? renderMarkdown(activeEditorTab.content) : ""),
+    [activeEditorTab, isMarkdownPreview],
+  );
+  const svgPreviewSrc = useMemo(
+    () => (activeEditorTab && isSvgPreview ? createSvgPreviewSource(activeEditorTab.content) : ""),
+    [activeEditorTab, isSvgPreview],
   );
 
   const editorOptions = useMemo<editor.IStandaloneEditorConstructionOptions>(
@@ -142,7 +153,7 @@ export function EditorPane({
     }
 
     const frame = window.requestAnimationFrame(() => {
-      if (isSessionDiffTab(activeTab)) {
+      if (isSessionDiffTab(activeTab) || isPreviewMode) {
         onCursorChange(1, 1);
       } else {
         const position = editorRef.current?.getPosition();
@@ -170,7 +181,7 @@ export function EditorPane({
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [activeTab, onCursorChange, tabs.length]);
+  }, [activeTab, isPreviewMode, onCursorChange, tabs.length]);
 
   useEffect(() => {
     if (!activeEditorTab || !isPreviewMode) {
@@ -189,12 +200,6 @@ export function EditorPane({
 
     return () => {
       window.cancelAnimationFrame(frame);
-
-      if (!markdownRef.current) {
-        return;
-      }
-
-      markdownScrollTopByPathRef.current[tabPath] = markdownRef.current.scrollTop;
     };
   }, [activeEditorTab?.absPath, isPreviewMode]);
 
@@ -215,7 +220,7 @@ export function EditorPane({
   }
 
   function togglePreviewMode() {
-    if (!activeEditorTab || !markdownEnabled) {
+    if (!activeEditorTab || !supportsTogglePreview) {
       return;
     }
 
@@ -279,11 +284,11 @@ export function EditorPane({
         </div>
 
         <div className="editor__tab-actions">
-          {activeEditorTab && markdownEnabled ? (
+          {supportsTogglePreview ? (
             <button
               className="editor__action-button"
               onClick={togglePreviewMode}
-              title={isPreviewMode ? "Back to editor" : "Preview Markdown"}
+              title={isPreviewMode ? "Back to editor" : markdownEnabled ? "Preview Markdown" : "Preview SVG"}
               type="button"
             >
               {isPreviewMode ? <SquarePen size={14} /> : <Eye size={14} />}
@@ -325,14 +330,31 @@ export function EditorPane({
 
       <div className="editor__surface">
         {activeEditorTab && isPreviewMode ? (
-          <article
-            className="editor__markdown"
-            dangerouslySetInnerHTML={{ __html: markdownHtml }}
-            onScroll={(event) => {
-              markdownScrollTopByPathRef.current[activeEditorTab.absPath] = event.currentTarget.scrollTop;
-            }}
-            ref={markdownRef}
-          />
+          isMarkdownPreview ? (
+            <div
+              className="editor__markdown"
+              dangerouslySetInnerHTML={{ __html: markdownHtml }}
+              onScroll={(event) => {
+                markdownScrollTopByPathRef.current[activeEditorTab.absPath] = event.currentTarget.scrollTop;
+              }}
+              ref={markdownRef}
+            />
+          ) : (
+            <div
+              className="editor__media-preview"
+              onScroll={(event) => {
+                markdownScrollTopByPathRef.current[activeEditorTab.absPath] = event.currentTarget.scrollTop;
+              }}
+              ref={markdownRef}
+            >
+              <img
+                alt={activeEditorTab.name}
+                className="editor__media-image"
+                src={isImagePreview ? activeEditorTab.content : svgPreviewSrc}
+              />
+              <div className="editor__media-meta">{activeEditorTab.relPath}</div>
+            </div>
+          )
         ) : activeEditorTab ? (
           <Editor
             className="editor__monaco"
@@ -372,4 +394,8 @@ function isSessionDiffTab(tab: WorkbenchTab | null): tab is SessionDiffTab {
 
 function getWorkbenchTabId(tab: WorkbenchTab) {
   return isSessionDiffTab(tab) ? tab.id : tab.absPath;
+}
+
+function createSvgPreviewSource(content: string) {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content)}`;
 }

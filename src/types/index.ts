@@ -136,6 +136,7 @@ export interface EditorTab {
   name: string;
   content: string;
   savedContent: string;
+  contentKind?: "text" | "image";
   isReadOnly?: boolean;
 }
 

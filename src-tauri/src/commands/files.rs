@@ -9,6 +9,7 @@ use std::os::windows::process::CommandExt;
 use crate::models::file_node::FileNode;
 use crate::models::file_search_result::FileSearchResult;
 use crate::services::file_tree;
+use crate::services::file_tree::ClipboardPasteFile;
 use crate::services::paths::path_to_string;
 
 #[cfg(windows)]
@@ -37,6 +38,13 @@ pub fn read_file(root_path: String, file_path: String) -> Result<String, String>
     let root = PathBuf::from(root_path);
     let file = PathBuf::from(file_path);
     file_tree::read_file(&root, &file)
+}
+
+#[tauri::command]
+pub fn read_media_file_data_url(root_path: String, file_path: String) -> Result<String, String> {
+    let root = PathBuf::from(root_path);
+    let file = PathBuf::from(file_path);
+    file_tree::read_media_file_data_url(&root, &file)
 }
 
 #[tauri::command]
@@ -80,6 +88,22 @@ pub fn rename_path(root_path: String, from_path: String, to_path: String) -> Res
     let from = PathBuf::from(from_path);
     let to = PathBuf::from(to_path);
     file_tree::rename_path(&root, &from, &to)
+}
+
+#[tauri::command]
+pub fn paste_clipboard_items(
+    root_path: String,
+    target_dir_path: String,
+    source_paths: Vec<String>,
+    files: Vec<ClipboardPasteFile>,
+) -> Result<Vec<String>, String> {
+    let root = PathBuf::from(root_path);
+    let target_dir = PathBuf::from(target_dir_path);
+    let source_paths = source_paths
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    file_tree::paste_clipboard_items(&root, &target_dir, &source_paths, &files)
 }
 
 #[tauri::command]

@@ -52,12 +52,30 @@ export function FileIcon({ fileName, size = "regular" }: FileIconProps) {
 }
 
 export function isMarkdownFile(fileName?: string) {
-  const extension = fileName?.split(".").pop()?.toLowerCase();
-  return extension === "md" || extension === "markdown";
+  return getFileExtension(fileName) === "md" || getFileExtension(fileName) === "markdown";
+}
+
+export function isSvgFile(fileName?: string) {
+  return getFileExtension(fileName) === "svg";
+}
+
+export function isImageFile(fileName?: string) {
+  const extension = getFileExtension(fileName);
+  return (
+    extension === "png" ||
+    extension === "jpg" ||
+    extension === "jpeg" ||
+    extension === "gif" ||
+    extension === "webp" ||
+    extension === "bmp" ||
+    extension === "ico" ||
+    extension === "avif" ||
+    extension === "svg"
+  );
 }
 
 function getFileIconConfig(fileName: string): FileIconConfig {
-  const extension = fileName.split(".").pop()?.toLowerCase();
+  const extension = getFileExtension(fileName);
   if (!extension) {
     return {
       label: "FI",
@@ -66,4 +84,8 @@ function getFileIconConfig(fileName: string): FileIconConfig {
   }
 
   return FILE_ICON_CONFIGS[extension] ?? { label: extension.slice(0, 2).toUpperCase(), tone: "text" };
+}
+
+function getFileExtension(fileName?: string) {
+  return fileName?.split(".").pop()?.toLowerCase();
 }

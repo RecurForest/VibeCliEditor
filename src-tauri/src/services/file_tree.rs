@@ -3,11 +3,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use pathdiff::diff_paths;
+use serde::Deserialize;
 
 use crate::models::file_node::FileNode;
 use crate::models::file_search_result::FileSearchResult;
 use crate::services::paths::path_to_string;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardPasteFile {
+    pub bytes: Vec<u8>,
+    pub name: String,
+}
 
 pub fn scan_root(root: &Path) -> Result<FileNode, String> {
     let root = normalize_directory(root)?;
@@ -34,6 +43,34 @@ pub fn read_file(root: &Path, file: &Path) -> Result<String, String> {
     }
 
     fs::read_to_string(file).map_err(|error| error.to_string())
+}
+
+pub fn read_media_file_data_url(root: &Path, file: &Path) -> Result<String, String> {
+    let root = normalize_directory(root)?;
+    let file = normalize_existing_path(file)?;
+    ensure_within_root(&root, &file)?;
+
+    if file.is_dir() {
+        return Err(format!(
+            "Cannot read directory as media file: {}",
+            file.to_string_lossy()
+        ));
+    }
+
+    let mime_type = resolve_media_mime_type(&file).ok_or_else(|| {
+        format!(
+            "Unsupported media file type: {}",
+            file.file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| file.to_string_lossy().to_string())
+        )
+    })?;
+    let bytes = fs::read(&file).map_err(|error| error.to_string())?;
+
+    Ok(format!(
+        "data:{mime_type};base64,{}",
+        STANDARD.encode(bytes)
+    ))
 }
 
 pub fn write_file(root: &Path, file: &Path, content: String) -> Result<(), String> {
@@ -156,6 +193,51 @@ pub fn rename_path(root: &Path, from: &Path, to: &Path) -> Result<(), String> {
     fs::rename(from, to).map_err(|error| error.to_string())
 }
 
+pub fn paste_clipboard_items(
+    root: &Path,
+    target_dir: &Path,
+    source_paths: &[PathBuf],
+    files: &[ClipboardPasteFile],
+) -> Result<Vec<String>, String> {
+    let root = normalize_directory(root)?;
+    let target_dir = normalize_directory(target_dir)?;
+    ensure_within_root(&root, &target_dir)?;
+
+    let mut pasted_paths = Vec::new();
+
+    for source_path in source_paths {
+        let source = normalize_existing_path(source_path)?;
+        let source_name = source.file_name().ok_or_else(|| {
+            format!(
+                "Unable to resolve a file or folder name for {}",
+                source.to_string_lossy()
+            )
+        })?;
+        let destination = resolve_unique_destination_path(&target_dir, Path::new(source_name))?;
+
+        if source.is_dir() {
+            if destination.starts_with(&source) {
+                return Err(String::from("Cannot paste a folder into itself."));
+            }
+
+            copy_directory_recursive(&source, &destination)?;
+        } else {
+            copy_file_to_destination(&source, &destination)?;
+        }
+
+        pasted_paths.push(path_to_string(&destination));
+    }
+
+    for file in files {
+        let file_name = sanitize_pasted_file_name(&file.name)?;
+        let destination = resolve_unique_destination_path(&target_dir, Path::new(&file_name))?;
+        write_pasted_file(&destination, &file.bytes)?;
+        pasted_paths.push(path_to_string(&destination));
+    }
+
+    Ok(pasted_paths)
+}
+
 pub fn search_files(
     root: &Path,
     query: &str,
@@ -232,6 +314,127 @@ fn list_children(root: &Path, dir: &Path) -> Result<Vec<FileNode>, String> {
     nodes.sort_by(compare_nodes);
 
     Ok(nodes)
+}
+
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+
+        if source_path.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path)?;
+            continue;
+        }
+
+        copy_file_to_destination(&source_path, &destination_path)?;
+    }
+
+    Ok(())
+}
+
+fn copy_file_to_destination(source: &Path, destination: &Path) -> Result<(), String> {
+    let parent = destination.parent().ok_or_else(|| {
+        format!(
+            "Unable to resolve parent directory for {}",
+            destination.to_string_lossy()
+        )
+    })?;
+
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    fs::copy(source, destination).map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn write_pasted_file(destination: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = destination.parent().ok_or_else(|| {
+        format!(
+            "Unable to resolve parent directory for {}",
+            destination.to_string_lossy()
+        )
+    })?;
+
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    fs::write(destination, bytes).map_err(|error| error.to_string())
+}
+
+fn sanitize_pasted_file_name(name: &str) -> Result<String, String> {
+    let trimmed_name = name.trim();
+    if trimmed_name.is_empty() {
+        return Err(String::from("Clipboard file name cannot be empty."));
+    }
+
+    let file_name = Path::new(trimmed_name)
+        .file_name()
+        .ok_or_else(|| String::from("Clipboard file name is invalid."))?
+        .to_string_lossy()
+        .trim()
+        .to_string();
+
+    if file_name.is_empty() {
+        return Err(String::from("Clipboard file name is invalid."));
+    }
+
+    Ok(file_name)
+}
+
+fn resolve_media_mime_type(path: &Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
+
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "avif" => Some("image/avif"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
+fn resolve_unique_destination_path(target_dir: &Path, file_name: &Path) -> Result<PathBuf, String> {
+    let file_name = file_name
+        .file_name()
+        .ok_or_else(|| String::from("Clipboard item does not have a valid file name."))?;
+    let candidate_path = target_dir.join(file_name);
+
+    if !candidate_path.exists() {
+        return Ok(candidate_path);
+    }
+
+    let name_path = Path::new(file_name);
+    let file_stem = name_path
+        .file_stem()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| String::from("pasted"));
+    let file_extension = name_path
+        .extension()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.is_empty());
+
+    let mut copy_index = 1usize;
+
+    loop {
+        let candidate_name = match &file_extension {
+            Some(extension) if copy_index == 1 => format!("{file_stem} copy.{extension}"),
+            Some(extension) => format!("{file_stem} copy {copy_index}.{extension}"),
+            None if copy_index == 1 => format!("{file_stem} copy"),
+            None => format!("{file_stem} copy {copy_index}"),
+        };
+        let candidate_path = target_dir.join(candidate_name);
+
+        if !candidate_path.exists() {
+            return Ok(candidate_path);
+        }
+
+        copy_index += 1;
+    }
 }
 
 fn compare_nodes(left: &FileNode, right: &FileNode) -> Ordering {

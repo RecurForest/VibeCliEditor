@@ -22,6 +22,16 @@ interface UseFileTreeOptions {
   rootPath: string | null;
 }
 
+export interface ClipboardImportFile {
+  bytes: number[];
+  name: string;
+}
+
+export interface ClipboardPastePayload {
+  files: ClipboardImportFile[];
+  sourcePaths: string[];
+}
+
 export function useFileTree({
   onDeletePaths,
   onInsertPaths,
@@ -454,6 +464,75 @@ export function useFileTree({
     }
   }
 
+  function resolvePasteTargetDirectory(fromContextMenu: boolean) {
+    const currentRootPath = rootNodeRef.current?.absPath ?? rootPath;
+    if (!currentRootPath) {
+      return null;
+    }
+
+    if (fromContextMenu) {
+      const targetNode = contextMenu?.targetNode;
+      if (!targetNode) {
+        return null;
+      }
+
+      return targetNode.isDir ? targetNode.absPath : getParentPath(targetNode.absPath);
+    }
+
+    const selectedPath = selectedPathsRef.current[0];
+    if (selectedPath) {
+      const selectedNode = findNodeByPath(rootNodeRef.current, selectedPath);
+      if (selectedNode) {
+        return selectedNode.isDir ? selectedNode.absPath : getParentPath(selectedNode.absPath);
+      }
+
+      return getParentPath(selectedPath);
+    }
+
+    return currentRootPath;
+  }
+
+  async function pasteIntoSelection(payload: ClipboardPastePayload) {
+    const targetDirPath = resolvePasteTargetDirectory(Boolean(contextMenu));
+    if (!rootPath || !targetDirPath) {
+      return;
+    }
+
+    const normalizedSourcePaths = Array.from(
+      new Set(payload.sourcePaths.map((path) => path.trim()).filter(Boolean)),
+    );
+    const normalizedFiles = payload.files.filter((file) => file.name.trim().length > 0);
+
+    if (!normalizedSourcePaths.length && !normalizedFiles.length) {
+      setError("Clipboard does not contain files to paste.");
+      return;
+    }
+
+    try {
+      const pastedPaths = await invoke<string[]>("paste_clipboard_items", {
+        files: normalizedFiles,
+        rootPath,
+        sourcePaths: normalizedSourcePaths,
+        targetDirPath,
+      });
+
+      setContextMenu(null);
+      setError(null);
+      await requestReload();
+
+      if (!pastedPaths.length) {
+        return;
+      }
+
+      await revealPath(pastedPaths[0]);
+      if (pastedPaths.length > 1) {
+        setSelectedPaths(pastedPaths);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
   async function revealPath(targetPath: string) {
     const currentRootNode = rootNodeRef.current;
     const resolvedRootPath = currentRootNode?.absPath ?? rootPath;
@@ -505,10 +584,12 @@ export function useFileTree({
   const deletableContextPaths = collapseDeleteTargets(
     contextSelectionPaths.filter((path) => !isWorkspaceRootPath(path, workspaceRootPath)),
   );
+  const contextPasteTargetDirectory = resolvePasteTargetDirectory(true);
 
   return {
     canCreateInContextTarget: Boolean(contextMenu?.targetNode.isDir),
     canDeleteContextSelection: deletableContextPaths.length > 0,
+    canPasteIntoContextTarget: Boolean(rootPath && contextPasteTargetDirectory),
     canRenameContextTarget: Boolean(
       contextMenu && !isWorkspaceRootPath(contextMenu.targetPath, workspaceRootPath),
     ),
@@ -525,6 +606,7 @@ export function useFileTree({
     insertSelection,
     isLoading,
     loadingPaths,
+    pasteIntoSelection,
     quickInsert,
     renameContextTarget,
     revealPath,

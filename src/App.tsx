@@ -455,6 +455,21 @@ function App() {
     }
   }
 
+  const handleInsertIntoMainTerminal = useCallback(
+    async (text: string) => {
+      if (!text) {
+        return;
+      }
+
+      await terminal.sendToSelectedSession(text, {
+        appendNewline: false,
+        startShellIfMissing: true,
+        trackTitleInput: false,
+      });
+    },
+    [terminal],
+  );
+
   const handleFileTreeInputDialogClose = useCallback((value: string | null) => {
     fileTreeInputDialogResolverRef.current?.(value);
     fileTreeInputDialogResolverRef.current = null;
@@ -936,12 +951,13 @@ function App() {
 
       <div className="ide__main">
         <PanelGroup className="ide__panels" direction="horizontal">
-          <Panel defaultSize={20} minSize={14}>
+          <Panel defaultSize={20} minSize={10}>
             <FileTree
               activeFilePath={editor.activeTab?.absPath ?? null}
               canCreateInContextTarget={fileTree.canCreateInContextTarget}
               canDeleteContextSelection={fileTree.canDeleteContextSelection}
               canLocateActiveFile={Boolean(editor.activeTab)}
+              canPasteIntoContextTarget={fileTree.canPasteIntoContextTarget}
               canRenameContextTarget={fileTree.canRenameContextTarget}
               contextMenu={fileTree.contextMenu}
               dirtyPaths={editor.dirtyPaths}
@@ -953,6 +969,7 @@ function App() {
               onContextCreateFolder={fileTree.createContextFolder}
               onContextDelete={fileTree.deleteContextSelection}
               onContextOpenInFileManager={handleOpenInFileManager}
+              onContextPaste={fileTree.pasteIntoSelection}
               onContextRename={fileTree.renameContextTarget}
               onContextInsert={fileTree.insertContextSelection}
               onLocateActiveFile={handleLocateActiveFile}
@@ -984,6 +1001,7 @@ function App() {
                         <InlineCmdTerminal
                           launchDir={terminalLaunchDir}
                           onClose={() => setIsInlineTerminalVisible(false)}
+                          onInsertSelectionToMainTerminal={handleInsertIntoMainTerminal}
                           onSessionComplete={refreshWorkspace}
                           workingDir={rootPath}
                         />

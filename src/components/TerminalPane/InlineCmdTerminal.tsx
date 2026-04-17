@@ -11,6 +11,7 @@ import { useTerminal } from "./useTerminal";
 interface InlineCmdTerminalProps {
   launchDir: string | null;
   onClose: () => void;
+  onInsertSelectionToMainTerminal?: (text: string) => void;
   onSessionComplete?: () => void;
   workingDir: string | null;
 }
@@ -18,6 +19,7 @@ interface InlineCmdTerminalProps {
 export function InlineCmdTerminal({
   launchDir,
   onClose,
+  onInsertSelectionToMainTerminal,
   onSessionComplete,
   workingDir,
 }: InlineCmdTerminalProps) {
@@ -136,6 +138,17 @@ export function InlineCmdTerminal({
             ref={contextMenuRef}
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
+            <button
+              className="context-menu__button"
+              disabled={!trimmedSelection}
+              onClick={() => {
+                onInsertSelectionToMainTerminal?.(contextMenu.selectionText);
+                setContextMenu(null);
+              }}
+              type="button"
+            >
+              To terminal
+            </button>
             <button
               className="context-menu__button"
               disabled={!trimmedSelection}
