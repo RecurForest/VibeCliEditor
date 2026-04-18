@@ -107,6 +107,16 @@ pub fn paste_clipboard_items(
 }
 
 #[tauri::command]
+pub fn save_clipboard_files_to_temp(files: Vec<ClipboardPasteFile>) -> Result<Vec<String>, String> {
+    file_tree::save_clipboard_files_to_temp(&files)
+}
+
+#[tauri::command]
+pub fn cleanup_stale_composer_attachment_temp() -> Result<(), String> {
+    file_tree::cleanup_stale_composer_attachment_temp()
+}
+
+#[tauri::command]
 pub fn search_files(root_path: String, query: String) -> Result<Vec<FileSearchResult>, String> {
     let root = PathBuf::from(root_path);
     file_tree::search_files(&root, &query, 40)

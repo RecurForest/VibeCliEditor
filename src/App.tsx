@@ -9,6 +9,7 @@ import {
   Maximize2,
   Minimize2,
   Minus,
+  PenLine,
   RefreshCw,
   SquareTerminal,
   X,
@@ -31,18 +32,10 @@ import { useFileTree } from "./components/FileTree/useFileTree";
 import { StatusBar } from "./components/StatusBar/StatusBar";
 import { InlineCmdTerminal } from "./components/TerminalPane/InlineCmdTerminal";
 import { TerminalPane } from "./components/TerminalPane/TerminalPane";
-import { getAgentProviderLabel, patchAgentProfile } from "./components/TerminalPane/agentSessionProfiles";
-import {
-  TERMINAL_COMPOSER_SEND_STRATEGY_OPTIONS,
-  isTerminalComposerSendStrategy,
-  type TerminalComposerSendStrategy,
-} from "./components/TerminalPane/terminalComposerSendStrategy";
-import { resolveTerminalComposerInput } from "./components/TerminalPane/terminalSlashRouter";
 import { useTerminal } from "./components/TerminalPane/useTerminal";
 import { WorkspaceFileSearch } from "./components/WorkspaceSearch/WorkspaceFileSearch";
 import type {
   AgentProvider,
-  ComposerTarget,
   EditorTab,
   FileNode,
   FileSearchResult,
@@ -52,6 +45,7 @@ import type {
   ShellKind,
   WorkbenchTab,
 } from "./types";
+import { resolveProjectRelativePath } from "./utils/paths";
 import "./App.css";
 
 const appWindow = getCurrentWindow();
@@ -59,9 +53,6 @@ const APP_WINDOW_TITLE = "VibeCliEditor";
 const RECENT_FOLDERS_STORAGE_KEY = "vibeCliEditor.recentFolders";
 const LEGACY_RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
 const MAX_RECENT_FOLDERS = 8;
-const TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY = "vibeCliEditor.terminalComposer.sendStrategy";
-const LEGACY_TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY =
-  "jterminal.terminalComposer.sendStrategy";
 
 interface FileTreeInputDialogState {
   initialValue: string;
@@ -78,9 +69,18 @@ function App() {
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [isInlineTerminalVisible, setIsInlineTerminalVisible] = useState(false);
-  const [terminalComposerSendStrategy, setTerminalComposerSendStrategy] =
-    useState<TerminalComposerSendStrategy>(() => loadTerminalComposerSendStrategy());
+  const [isComposerEnabled, setIsComposerEnabled] = useState(true);
+  const [mainTerminalComposerInsertRequest, setMainTerminalComposerInsertRequest] = useState<{
+    sequence: number;
+    text: string;
+  }>({
+    sequence: 0,
+    text: "",
+  });
   const [fileTreeInputDialog, setFileTreeInputDialog] = useState<FileTreeInputDialogState | null>(
+    null,
+  );
+  const [pendingAgentLaunchProvider, setPendingAgentLaunchProvider] = useState<AgentProvider | null>(
     null,
   );
   const [sessionDiffTab, setSessionDiffTab] = useState<SessionDiffTab | null>(null);
@@ -104,6 +104,16 @@ function App() {
     () => getWorkspaceInitials(currentWorkspaceName),
     [currentWorkspaceName],
   );
+  const insertIntoMainTerminalComposer = useCallback((text: string) => {
+    if (!text) {
+      return;
+    }
+
+    setMainTerminalComposerInsertRequest((currentRequest) => ({
+      sequence: currentRequest.sequence + 1,
+      text,
+    }));
+  }, []);
   const visibleRecentFolders = useMemo(
     () => recentFolders.filter((path) => path !== rootPath),
     [recentFolders, rootPath],
@@ -132,6 +142,11 @@ function App() {
     },
     onInsertPaths: async (paths) => {
       if (!rootPath) {
+        return;
+      }
+
+      if (isComposerEnabled) {
+        insertIntoMainTerminalComposer(buildComposerPathInsertText(paths, rootPath, shellKind));
         return;
       }
 
@@ -270,8 +285,30 @@ function App() {
   }, [rootPath]);
 
   useEffect(() => {
-    persistTerminalComposerSendStrategy(terminalComposerSendStrategy);
-  }, [terminalComposerSendStrategy]);
+    void invoke("cleanup_stale_composer_attachment_temp").catch((error) => {
+      console.warn("[composer] Failed to clean stale temporary attachments.", error);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!pendingAgentLaunchProvider || !rootPath || !terminal.canLaunch) {
+      return;
+    }
+
+    if (pendingAgentLaunchProvider === "codex") {
+      terminal.launchCodex();
+    } else {
+      terminal.launchClaude();
+    }
+
+    setPendingAgentLaunchProvider(null);
+  }, [
+    pendingAgentLaunchProvider,
+    rootPath,
+    terminal.canLaunch,
+    terminal.launchClaude,
+    terminal.launchCodex,
+  ]);
 
   useEffect(() => {
     document.title = windowTitle;
@@ -398,7 +435,7 @@ function App() {
     setIsWorkspaceMenuOpen(false);
   }, []);
 
-  async function handlePickDirectory(target: "current" | "newWindow" = rootPath ? "newWindow" : "current") {
+  const pickWorkspaceDirectory = useCallback(async () => {
     setIsWorkspaceMenuOpen(false);
 
     const result = await open({
@@ -408,14 +445,56 @@ function App() {
       title: "Select Workspace Folder",
     });
 
-    if (typeof result === "string") {
-      if (target === "current") {
-        openWorkspaceInCurrentWindow(result);
-      } else {
-        openWorkspaceInNewWindow(result);
-      }
+    return typeof result === "string" ? result : null;
+  }, [rootPath]);
+
+  async function handlePickDirectory(target: "current" | "newWindow" = rootPath ? "newWindow" : "current") {
+    const result = await pickWorkspaceDirectory();
+    if (!result) {
+      return;
+    }
+
+    if (target === "current") {
+      openWorkspaceInCurrentWindow(result);
+    } else {
+      openWorkspaceInNewWindow(result);
     }
   }
+
+  const launchAgentFromShortcut = useCallback(
+    async (provider: AgentProvider) => {
+      if (!rootPath) {
+        const nextRootPath = await pickWorkspaceDirectory();
+        if (!nextRootPath) {
+          return;
+        }
+
+        setPendingAgentLaunchProvider(provider);
+        openWorkspaceInCurrentWindow(nextRootPath);
+        return;
+      }
+
+      if (!terminal.canLaunch) {
+        setPendingAgentLaunchProvider(provider);
+        return;
+      }
+
+      if (provider === "codex") {
+        terminal.launchCodex();
+        return;
+      }
+
+      terminal.launchClaude();
+    },
+    [
+      openWorkspaceInCurrentWindow,
+      pickWorkspaceDirectory,
+      rootPath,
+      terminal.canLaunch,
+      terminal.launchClaude,
+      terminal.launchCodex,
+    ],
+  );
 
   async function handleWorkspaceSearchOpen(result: FileSearchResult) {
     await Promise.all([
@@ -461,14 +540,25 @@ function App() {
         return;
       }
 
+      if (isComposerEnabled) {
+        insertIntoMainTerminalComposer(text);
+        return;
+      }
+
       await terminal.sendToSelectedSession(text, {
         appendNewline: false,
         startShellIfMissing: true,
         trackTitleInput: false,
       });
     },
-    [terminal],
+    [insertIntoMainTerminalComposer, isComposerEnabled, terminal],
   );
+  const handleLaunchCodexShortcut = useCallback(() => {
+    void launchAgentFromShortcut("codex");
+  }, [launchAgentFromShortcut]);
+  const handleLaunchClaudeShortcut = useCallback(() => {
+    void launchAgentFromShortcut("claude");
+  }, [launchAgentFromShortcut]);
 
   const handleFileTreeInputDialogClose = useCallback((value: string | null) => {
     fileTreeInputDialogResolverRef.current?.(value);
@@ -662,96 +752,19 @@ function App() {
               : terminal.selectedSessionDiffState?.error
               ? terminal.selectedSessionDiffState.error
                 : "Open changed files in the content area.";
-  const mainTerminalComposerTarget = useMemo(
-    () => getTerminalComposerTarget(terminal.selectedSession, terminal.preferredAgentProvider),
-    [terminal.preferredAgentProvider, terminal.selectedSession],
-  );
   const mainTerminalComposerPlaceholder = useMemo(
-    () =>
-      getTerminalComposerPlaceholder(
-        terminal.selectedSession,
-        terminal.preferredAgentProvider,
-        rootPath,
-      ),
-    [rootPath, terminal.preferredAgentProvider, terminal.selectedSession],
+    () => getTerminalComposerPlaceholder(rootPath),
+    [rootPath],
   );
-  const mainTerminalComposerQuickActions = useMemo(
-    () => getTerminalComposerQuickActions(terminal.selectedSession, terminal.preferredAgentProvider),
-    [terminal.preferredAgentProvider, terminal.selectedSession],
-  );
-  const mainTerminalComposerUsesTerminalSendStrategy =
-    mainTerminalComposerTarget.kind === "shellSession";
   const handleMainTerminalComposerSubmit = useCallback(
     async (text: string) => {
-      const resolution = resolveTerminalComposerInput({
-        pendingProfiles: terminal.pendingAgentProfiles,
-        selectedSession: terminal.selectedSession,
-        target: mainTerminalComposerTarget,
-        text,
-      });
-
-      if (resolution.kind === "reject") {
-        throw new Error(resolution.message);
-      }
-
-      if (resolution.kind === "update_pending_profile") {
-        terminal.updatePendingAgentProfile(resolution.provider, resolution.patchProfile);
-        return;
-      }
-
-      if (resolution.kind === "spawn_successor_session") {
-        await terminal.startAgentSession(resolution.profile);
-        return;
-      }
-
-      if (resolution.kind === "provider_passthrough") {
-        const activeSession = terminal.selectedSession;
-        if (!activeSession || activeSession.status !== "active") {
-          throw new Error("Select an active Claude session first.");
-        }
-
-        const baseProfile =
-          activeSession.agent?.requestedProfile ?? terminal.pendingAgentProfiles.claude;
-        await terminal.startAgentSession(patchAgentProfile(baseProfile, resolution.patchProfile), {
-          continueFromLast: true,
-          continueFromSessionId: activeSession.id,
-        });
-        await terminal.endSession(activeSession.id);
-        return;
-      }
-
-      const activeSession = terminal.selectedSession;
-      if (
-        activeSession?.status === "active" &&
-        (activeSession.mode === "codex" || activeSession.mode === "claude")
-      ) {
-        const baseProfile =
-          activeSession.agent?.requestedProfile ?? terminal.pendingAgentProfiles[activeSession.mode];
-        await terminal.startAgentSession(baseProfile, {
-          continueFromLast: true,
-          continueFromSessionId: activeSession.id,
-          prompt: resolution.text,
-        });
-        await terminal.endSession(activeSession.id);
-        return;
-      }
-
-      if (mainTerminalComposerTarget.kind === "agentLauncher" && mainTerminalComposerTarget.provider) {
-        await terminal.startAgentSession(
-          terminal.pendingAgentProfiles[mainTerminalComposerTarget.provider],
-          {
-            prompt: resolution.text,
-          },
-        );
-        return;
-      }
-
-      await terminal.sendToSelectedSession(resolution.text, {
-        appendNewline: true,
-        sendStrategy: terminalComposerSendStrategy,
+      await terminal.sendToSelectedSession(text, {
+        appendNewline: false,
+        startShellIfMissing: true,
+        trackTitleInput: false,
       });
     },
-    [mainTerminalComposerTarget, terminal, terminalComposerSendStrategy],
+    [terminal],
   );
 
   return (
@@ -919,6 +932,16 @@ function App() {
               <RefreshCw size={12} />
               {terminal.selectedSessionDiffBaselineButtonLabel}
             </button>
+            <button
+              aria-pressed={isComposerEnabled}
+              className="app-titlebar__composer-toggle"
+              data-state={isComposerEnabled ? "enabled" : "disabled"}
+              onClick={() => setIsComposerEnabled((value) => !value)}
+              title={isComposerEnabled ? "Hide composer" : "Show composer"}
+              type="button"
+            >
+              <PenLine size={14} />
+            </button>
           </div>
           <div className="window-controls">
             <button
@@ -1017,27 +1040,17 @@ function App() {
                 <Panel defaultSize={34} minSize={22}>
                   <TerminalPane
                     canLaunch={terminal.canLaunch}
-                    composerEnabled={false}
+                    composerEnabled={isComposerEnabled}
+                    composerExternalInsertSequence={mainTerminalComposerInsertRequest.sequence}
+                    composerExternalInsertText={mainTerminalComposerInsertRequest.text}
                     composerPlaceholder={mainTerminalComposerPlaceholder}
-                    composerQuickActions={mainTerminalComposerQuickActions}
-                    composerSendStrategy={
-                      mainTerminalComposerUsesTerminalSendStrategy
-                        ? terminalComposerSendStrategy
-                        : undefined
-                    }
-                    composerSendStrategyOptions={
-                      mainTerminalComposerUsesTerminalSendStrategy
-                        ? TERMINAL_COMPOSER_SEND_STRATEGY_OPTIONS
-                        : []
-                    }
                     hasSessions={terminal.hasSessions}
                     isSessionActive={terminal.isSessionActive}
-                    onClaude={terminal.launchClaude}
+                    onClaude={handleLaunchClaudeShortcut}
                     onClear={terminal.clearTerminal}
                     onClose={terminal.closeTerminal}
-                    onComposerSendStrategyChange={setTerminalComposerSendStrategy}
                     onComposerSubmit={handleMainTerminalComposerSubmit}
-                    onCodex={terminal.launchCodex}
+                    onCodex={handleLaunchCodexShortcut}
                     onCopySelection={terminal.copySelection}
                     containerRef={terminal.containerRef}
                     error={terminal.error}
@@ -1127,33 +1140,6 @@ function persistRecentFolders(paths: string[]) {
     window.localStorage.setItem(RECENT_FOLDERS_STORAGE_KEY, JSON.stringify(paths));
   } catch {
     // Ignore storage errors and continue without persistence.
-  }
-}
-
-function loadTerminalComposerSendStrategy(): TerminalComposerSendStrategy {
-  if (typeof window === "undefined") {
-    return "auto";
-  }
-
-  try {
-    const rawValue =
-      window.localStorage.getItem(TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY) ??
-      window.localStorage.getItem(LEGACY_TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY);
-    return isTerminalComposerSendStrategy(rawValue) ? rawValue : "auto";
-  } catch {
-    return "auto";
-  }
-}
-
-function persistTerminalComposerSendStrategy(strategy: TerminalComposerSendStrategy) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(TERMINAL_COMPOSER_SEND_STRATEGY_STORAGE_KEY, strategy);
-  } catch {
-    // Ignore storage failures and continue without persisting the strategy.
   }
 }
 
@@ -1403,108 +1389,31 @@ function buildWindowTitle(activeItemName: string | null | undefined, workspaceNa
   return APP_WINDOW_TITLE;
 }
 
-function getTerminalComposerTarget(
-  selectedSession: ReturnType<typeof useTerminal>["selectedSession"],
-  preferredAgentProvider: AgentProvider,
-): ComposerTarget {
-  if (selectedSession?.status === "active") {
-    if (selectedSession.mode === "shell") {
-      return {
-        kind: "shellSession",
-        sessionId: selectedSession.id,
-        shellKind: selectedSession.shellKind,
-      };
-    }
+function buildComposerPathInsertText(paths: string[], projectRoot: string, shellKind: ShellKind) {
+  const escapedPaths = paths.map((path) =>
+    escapeComposerInsertPath(resolveProjectRelativePath(projectRoot, path), shellKind),
+  );
 
-    if (selectedSession.mode === "codex" || selectedSession.mode === "claude") {
-      return {
-        kind: "agentSession",
-        provider: selectedSession.mode,
-        sessionId: selectedSession.id,
-      };
-    }
+  if (!escapedPaths.length) {
+    return "";
   }
 
-  if (selectedSession?.mode === "codex" || selectedSession?.mode === "claude") {
-    return {
-      kind: "agentLauncher",
-      provider: selectedSession.mode,
-    };
+  return `${escapedPaths.join(" ")} `;
+}
+function escapeComposerInsertPath(path: string, shellKind: ShellKind) {
+  if (shellKind === "powershell") {
+    return `'${path.replace(/'/g, "''")}'`;
   }
 
-  return {
-    kind: "agentLauncher",
-    provider: preferredAgentProvider,
-  };
+  return `"${path.replace(/"/g, '""')}"`;
 }
 
-function getTerminalComposerPlaceholder(
-  selectedSession: ReturnType<typeof useTerminal>["selectedSession"],
-  preferredAgentProvider: AgentProvider,
-  rootPath: string | null,
-) {
+function getTerminalComposerPlaceholder(rootPath: string | null) {
   if (!rootPath) {
     return "Open a workspace first.";
   }
 
-  if (!selectedSession) {
-    return `Start a shell, Codex, or Claude session. /model applies to the next ${getAgentProviderLabel(preferredAgentProvider)} launch.`;
-  }
-
-  if (selectedSession.mode === "shell") {
-    return "Send shell input. Enter sends, Shift+Enter inserts a newline.";
-  }
-
-  if (selectedSession.status !== "active") {
-    return `${getAgentProviderLabel(selectedSession.mode)} session is complete. /model updates the next launch profile.`;
-  }
-
-  if (selectedSession.mode === "claude") {
-    return "Message Claude. Enter sends. /model forwards to Claude.";
-  }
-
-  return "Message Codex. Enter sends. /model starts a successor Codex session.";
-}
-
-function getTerminalComposerQuickActions(
-  selectedSession: ReturnType<typeof useTerminal>["selectedSession"],
-  preferredAgentProvider: AgentProvider,
-) {
-  if (!selectedSession) {
-    return preferredAgentProvider === "claude"
-      ? [
-          { label: "/model", text: "/model " },
-          { label: "Explain", text: "Explain the current codebase issue." },
-          { label: "Fix", text: "Fix the current issue." },
-        ]
-      : [
-          { label: "/model", text: "/model " },
-          { label: "Review", text: "Review the latest changes." },
-          { label: "Build", text: "Investigate the current build issue." },
-        ];
-  }
-
-  if (selectedSession.mode === "shell") {
-    return [
-      { label: "git status", text: "git status" },
-      { label: "pnpm build", text: "pnpm build" },
-      { label: "dir", text: "dir" },
-    ];
-  }
-
-  if (selectedSession.mode === "claude") {
-    return [
-      { label: "/model", text: "/model " },
-      { label: "Explain", text: "Explain the current issue." },
-      { label: "Fix", text: "Fix the current issue." },
-    ];
-  }
-
-  return [
-    { label: "/model", text: "/model " },
-    { label: "Review", text: "Review the current changes." },
-    { label: "Implement", text: "Implement the requested change." },
-  ];
+  return "Enter inserts text into the current terminal input. If no terminal is running, a shell starts automatically. Shift+Enter inserts a newline.";
 }
 
 function createSessionDiffTab(result: SessionDiffResult, sessionTitle: string): SessionDiffTab {

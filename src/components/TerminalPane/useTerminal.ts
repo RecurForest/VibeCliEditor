@@ -53,12 +53,6 @@ interface SendTextOptions {
   trackTitleInput?: boolean;
 }
 
-interface StartAgentSessionOptions {
-  continueFromLast?: boolean;
-  continueFromSessionId?: string | null;
-  prompt?: string | null;
-}
-
 export function useTerminal({
   launchDir,
   ownsSessionDiffLifecycle = true,
@@ -471,8 +465,11 @@ export function useTerminal({
     setSessions(restoredSessions);
 
     const nextSelectedSession =
-      getSessionById(restoredSessions, persistedState.selectedSessionId) ??
-      restoredSessions[restoredSessions.length - 1] ??
+      restoredSessions.find(
+        (session) =>
+          session.status === "active" && session.id === persistedState.selectedSessionId,
+      ) ??
+      [...restoredSessions].reverse().find((session) => session.status === "active") ??
       null;
 
     selectedSessionIdRef.current = nextSelectedSession?.id ?? null;
@@ -927,60 +924,6 @@ export function useTerminal({
     [applySessions],
   );
 
-  const setSessionRuntimeSessionId = useCallback(
-    (sessionId: string, runtimeSessionId: string) => {
-      applySessions((current) =>
-        current.map((session) => {
-          if (session.id !== sessionId || !session.agent) {
-            return session;
-          }
-
-          return {
-            ...session,
-            agent: {
-              ...session.agent,
-              runtimeSessionId,
-            },
-          };
-        }),
-      );
-    },
-    [applySessions],
-  );
-
-  const resolveCodexRuntimeSessionId = useCallback(async (targetWorkingDir: string, startedAt: number) => {
-    return invoke<string | null>("resolve_codex_session_id", {
-      startedAtMs: Math.max(0, Math.floor(startedAt)),
-      timeoutMs: 5000,
-      workingDir: targetWorkingDir,
-    });
-  }, []);
-
-  const ensureCodexRuntimeSessionId = useCallback(
-    async (sessionId: string) => {
-      const session = getSessionById(sessionsRef.current, sessionId);
-      if (!session || session.mode !== "codex" || !session.agent) {
-        return null;
-      }
-
-      const existingRuntimeSessionId = session.agent.runtimeSessionId?.trim();
-      if (existingRuntimeSessionId) {
-        return existingRuntimeSessionId;
-      }
-
-      const resolvedRuntimeSessionId = await resolveCodexRuntimeSessionId(
-        session.workingDir,
-        session.startedAt,
-      );
-      if (resolvedRuntimeSessionId) {
-        setSessionRuntimeSessionId(sessionId, resolvedRuntimeSessionId);
-      }
-
-      return resolvedRuntimeSessionId;
-    },
-    [resolveCodexRuntimeSessionId, setSessionRuntimeSessionId],
-  );
-
   const startShellSession = useCallback(async () => {
     return startSession({
       mode: "shell",
@@ -989,60 +932,24 @@ export function useTerminal({
   }, [shellKind, startSession]);
 
   const startAgentSession = useCallback(
-    async (
-      profile: AgentSessionProfile,
-      {
-        continueFromLast = false,
-        continueFromSessionId = null,
-        prompt = null,
-      }: StartAgentSessionOptions = {},
-    ) => {
+    async (profile: AgentSessionProfile) => {
       const normalizedProfile = cloneAgentProfile(profile);
       updatePendingAgentProfile(normalizedProfile.provider, normalizedProfile);
-      let runtimeSessionId: string | null = null;
-
-      if (normalizedProfile.provider === "codex" && continueFromLast) {
-        if (!continueFromSessionId) {
-          throw new Error("Select an active Codex session first.");
-        }
-
-        runtimeSessionId = await ensureCodexRuntimeSessionId(continueFromSessionId);
-        if (!runtimeSessionId) {
-          throw new Error(
-            "Unable to resolve the active Codex session ID. Start a new Codex session and try again.",
-          );
-        }
-      }
-
-      const shouldSendPromptViaStartupInput =
-        normalizedProfile.provider === "codex" && continueFromLast && Boolean(prompt?.trim());
 
       const nextSessionId = await startSession({
         agent: {
           provider: normalizedProfile.provider,
           requestedProfile: normalizedProfile,
-          runtimeSessionId,
           runtimeModelSwitchStrategy: getRuntimeModelSwitchStrategy(normalizedProfile.provider),
         },
         mode: normalizedProfile.provider,
-        spawnProcess: buildAgentTerminalProcess(normalizedProfile, {
-          continueFromLast,
-          prompt: shouldSendPromptViaStartupInput ? null : prompt,
-          runtimeSessionId,
-        }),
-        startupInput: shouldSendPromptViaStartupInput
-          ? `${prepareTerminalInputForPaste(prompt ?? "", false)}\r`
-          : null,
+        spawnProcess: buildAgentTerminalProcess(normalizedProfile),
         title: getAgentProviderLabel(normalizedProfile.provider),
       });
 
       return nextSessionId;
     },
-    [
-      ensureCodexRuntimeSessionId,
-      startSession,
-      updatePendingAgentProfile,
-    ],
+    [startSession, updatePendingAgentProfile],
   );
 
   const sendRawText = useCallback(
@@ -1057,7 +964,7 @@ export function useTerminal({
     ) => {
       const session = getSessionById(sessionsRef.current, sessionId);
       if (!session || session.status !== "active") {
-        throw new Error("Select an active terminal session first.");
+        throw new Error("Unable to write to the selected terminal session.");
       }
 
       const terminal = terminalRef.current;

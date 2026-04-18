@@ -21,25 +21,8 @@ export interface AgentSessionProfile {
 export interface AgentSessionMeta {
   provider: AgentProvider;
   requestedProfile: AgentSessionProfile;
-  runtimeSessionId?: string | null;
   runtimeModelSwitchStrategy: RuntimeModelSwitchStrategy;
 }
-
-export type ComposerTarget =
-  | {
-      kind: "shellSession";
-      sessionId: string;
-      shellKind: ShellKind;
-    }
-  | {
-      kind: "agentSession";
-      provider: AgentProvider;
-      sessionId: string;
-    }
-  | {
-      kind: "agentLauncher";
-      provider: AgentProvider | null;
-    };
 
 export interface FileNode {
   id: string;

@@ -27,6 +27,31 @@ const IGNORED_DIR_NAMES: &[&str] = &[
     "coverage",
 ];
 const IGNORED_DIR_PREFIXES: &[&str] = &["target-"];
+const IGNORED_FILE_NAMES: &[&str] = &["thumbs.db", "desktop.ini"];
+const IGNORED_FILE_SUFFIXES: &[&str] = &[
+    ".log",
+    ".tmp",
+    ".temp",
+    ".cache",
+    ".bak",
+    ".backup",
+    ".old",
+    ".orig",
+    ".rej",
+    ".pid",
+    ".pid.lock",
+    ".seed",
+    ".stackdump",
+    ".dmp",
+    ".trace",
+    ".tsbuildinfo",
+    ".map",
+    ".swp",
+    ".swo",
+    ".part",
+    ".crdownload",
+    "~",
+];
 
 struct CurrentWorkspaceFile {
     abs_path: PathBuf,
@@ -424,7 +449,9 @@ fn should_skip_entry(path: &Path) -> bool {
         return false;
     };
 
-    name.starts_with('.') || (path.is_dir() && is_ignored_dir_name(name))
+    is_hidden_name(name)
+        || (path.is_dir() && is_ignored_dir_name(name))
+        || (!path.is_dir() && is_ignored_file_name(name))
 }
 
 fn should_skip_relative_path(relative_path: &str) -> bool {
@@ -438,8 +465,14 @@ fn should_skip_relative_path(relative_path: &str) -> bool {
     };
 
     segments.iter().enumerate().any(|(index, segment)| {
-        segment.starts_with('.') || (index < last_index && is_ignored_dir_name(segment))
+        is_hidden_name(segment)
+            || (index < last_index && is_ignored_dir_name(segment))
+            || (index == last_index && is_ignored_file_name(segment))
     })
+}
+
+fn is_hidden_name(name: &str) -> bool {
+    name.starts_with('.')
 }
 
 fn is_ignored_dir_name(name: &str) -> bool {
@@ -452,6 +485,17 @@ fn is_ignored_dir_name(name: &str) -> bool {
                     .get(..prefix.len())
                     .is_some_and(|value| value.eq_ignore_ascii_case(prefix))
         })
+}
+
+fn is_ignored_file_name(name: &str) -> bool {
+    let lower_name = name.to_ascii_lowercase();
+
+    IGNORED_FILE_NAMES
+        .iter()
+        .any(|ignored| lower_name == *ignored)
+        || IGNORED_FILE_SUFFIXES
+            .iter()
+            .any(|suffix| lower_name.ends_with(suffix))
 }
 
 fn relative_path(root: &Path, path: &Path) -> Result<String, String> {
@@ -515,5 +559,33 @@ fn is_same_root(left: &str, right: &str) -> bool {
     #[cfg(not(windows))]
     {
         left == right
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_common_noise_file_suffixes() {
+        assert!(should_skip_relative_path("logs/server.LOG"));
+        assert!(should_skip_relative_path("cache/build.tsbuildinfo"));
+        assert!(should_skip_relative_path("assets/app.js.map"));
+        assert!(should_skip_relative_path("src/main.ts~"));
+        assert!(should_skip_relative_path("tmp/scratch.tmp"));
+    }
+
+    #[test]
+    fn skips_known_os_noise_file_names() {
+        assert!(should_skip_relative_path("Thumbs.db"));
+        assert!(should_skip_relative_path("Desktop.ini"));
+    }
+
+    #[test]
+    fn keeps_normal_project_files_visible_in_diff() {
+        assert!(!should_skip_relative_path("src/main.ts"));
+        assert!(!should_skip_relative_path("package-lock.json"));
+        assert!(!should_skip_relative_path("pnpm-lock.yaml"));
+        assert!(!should_skip_relative_path("docs/roadmap.md"));
     }
 }

@@ -52,30 +52,13 @@ export function getAgentProviderLabel(provider: AgentProvider) {
   return provider === "codex" ? "Codex" : "Claude";
 }
 
-export function buildAgentTerminalProcess(
-  profile: AgentSessionProfile,
-  {
-    continueFromLast = false,
-    prompt = null,
-    runtimeSessionId = null,
-  }: {
-    continueFromLast?: boolean;
-    prompt?: string | null;
-    runtimeSessionId?: string | null;
-  } = {},
-): AgentTerminalProcess {
+export function buildAgentTerminalProcess(profile: AgentSessionProfile): AgentTerminalProcess {
   const command = profile.provider === "codex" ? "codex" : "claude";
   const args: string[] = [];
 
   if (profile.provider === "codex") {
-    if (continueFromLast) {
-      args.push("resume");
-      if (runtimeSessionId?.trim()) {
-        args.push(runtimeSessionId.trim());
-      }
-    } else {
-      args.push("--yolo");
-    }
+    args.push("--yolo");
+    args.push("--no-alt-screen");
 
     if (profile.model?.trim()) {
       args.push("--model", profile.model.trim());
@@ -90,20 +73,12 @@ export function buildAgentTerminalProcess(
       args.push("--ask-for-approval", profile.approvalPolicy.trim());
     }
   } else {
-    if (continueFromLast) {
-      args.push("--continue");
-    }
-
     if (profile.model?.trim()) {
       args.push("--model", profile.model.trim());
     }
     if (profile.effort?.trim()) {
       args.push("--effort", profile.effort.trim());
     }
-  }
-
-  if (prompt) {
-    args.push(prompt);
   }
 
   return {

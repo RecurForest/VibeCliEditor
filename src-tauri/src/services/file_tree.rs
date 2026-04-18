@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use pathdiff::diff_paths;
@@ -17,6 +17,8 @@ pub struct ClipboardPasteFile {
     pub bytes: Vec<u8>,
     pub name: String,
 }
+
+const COMPOSER_ATTACHMENT_TEMP_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24 * 3);
 
 pub fn scan_root(root: &Path) -> Result<FileNode, String> {
     let root = normalize_directory(root)?;
@@ -238,6 +240,31 @@ pub fn paste_clipboard_items(
     Ok(pasted_paths)
 }
 
+pub fn save_clipboard_files_to_temp(files: &[ClipboardPasteFile]) -> Result<Vec<String>, String> {
+    cleanup_stale_composer_attachment_temp()?;
+
+    let target_dir = composer_attachment_temp_dir();
+    fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+
+    let mut saved_paths = Vec::new();
+
+    for file in files {
+        let file_name = sanitize_pasted_file_name(&file.name)?;
+        let destination = resolve_unique_destination_path(&target_dir, Path::new(&file_name))?;
+        write_pasted_file(&destination, &file.bytes)?;
+        saved_paths.push(path_to_string(&destination));
+    }
+
+    Ok(saved_paths)
+}
+
+pub fn cleanup_stale_composer_attachment_temp() -> Result<(), String> {
+    cleanup_stale_entries_in_dir(
+        &composer_attachment_temp_dir(),
+        COMPOSER_ATTACHMENT_TEMP_MAX_AGE,
+    )
+}
+
 pub fn search_files(
     root: &Path,
     query: &str,
@@ -359,6 +386,60 @@ fn write_pasted_file(destination: &Path, bytes: &[u8]) -> Result<(), String> {
 
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     fs::write(destination, bytes).map_err(|error| error.to_string())
+}
+
+fn composer_attachment_temp_dir() -> PathBuf {
+    std::env::temp_dir()
+        .join("VibeCliEditor")
+        .join("composer-attachments")
+}
+
+fn cleanup_stale_entries_in_dir(target_dir: &Path, max_age: Duration) -> Result<(), String> {
+    if !target_dir.exists() {
+        return Ok(());
+    }
+
+    let now = SystemTime::now();
+
+    for entry in fs::read_dir(target_dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+
+        if !is_stale_temp_entry(&path, now, max_age)? {
+            continue;
+        }
+
+        if path.is_dir() {
+            fs::remove_dir_all(&path).map_err(|error| error.to_string())?;
+        } else {
+            fs::remove_file(&path).map_err(|error| error.to_string())?;
+        }
+    }
+
+    if fs::read_dir(target_dir)
+        .map_err(|error| error.to_string())?
+        .next()
+        .is_none()
+    {
+        let _ = fs::remove_dir(target_dir);
+    }
+
+    Ok(())
+}
+
+fn is_stale_temp_entry(path: &Path, now: SystemTime, max_age: Duration) -> Result<bool, String> {
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    let updated_at = metadata.modified().ok().or_else(|| metadata.created().ok());
+
+    let Some(updated_at) = updated_at else {
+        return Ok(false);
+    };
+
+    let Ok(age) = now.duration_since(updated_at) else {
+        return Ok(false);
+    };
+
+    Ok(age >= max_age)
 }
 
 fn sanitize_pasted_file_name(name: &str) -> Result<String, String> {

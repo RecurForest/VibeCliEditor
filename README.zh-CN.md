@@ -6,37 +6,49 @@
   <img src="src/assets/vibe-cli-editor-logo.svg" alt="VibeCliEditor logo" width="96" />
 </p>
 
+> [!IMPORTANT]
+> Windows 快速安装：前往 [Releases](https://github.com/jipeigong/VibeJTerminal/releases/latest) 下载最新打包版本，直接安装其中的 `.exe` 或 `.msi` 即可开始使用。
+> 当前打包版仅支持 Windows。如果你想使用快捷启动入口，请先确认本机 `PATH` 中已经有 `codex` 和/或 `claude`。
+
+## 核心亮点
+
+- 面向 `codex` 和 Claude Code CLI 会话的 Terminal Composer，在终端工作区内提供独立的提示词输入区
+- 支持通过文件选择器添加附件、粘贴本地文件路径，以及直接把截图或图片粘贴进 composer
+- 粘贴进来的文件会在发送前自动保存成临时附件路径，让终端 AI 工作流里的附件传递更稳定
+- session diff baseline、专用 diff 视图，以及按文件或代码块回退能力，让 AI 改动始终可审查、可回退
+
 <p align="center">
-  <strong>VibeCliEditor 最大的特色，是为 AI vibe coding 提供可审查、可回退的会话级 diff 工作流。</strong>
-  当你使用 <code>codex</code> 或 Claude Code（<code>claude</code>）开发时，真正麻烦的不只是让 AI 改代码，而是改完之后很难快速审查到底改了什么，也很难安全地还原。VibeCliEditor 把这些终端驱动的改动直接变成可查看、可对比、可回退的工作流。
+  <strong>VibeCliEditor 把 AI 会话级 diff 工作流和面向 Codex / Claude Code 的实用 composer 放进了同一个桌面工作区。</strong>
+  当你使用 <code>codex</code> 或 Claude Code（<code>claude</code>）开发时，麻烦的不只是让 AI 改代码，还包括怎么把正确的上下文附进去、怎么快速审查改动，以及怎么安全地回退。VibeCliEditor 把这些终端驱动的关键步骤都集中到一个工作区里。
 </p>
 
 <p align="center">
-  你可以为一次 AI 会话建立 baseline，打开专门的 diff 视图，按文件检查改动，并按文件或按代码块执行 revert。这正面解决了 <code>codex</code> / Claude Code 工作流中最常见的痛点：改动来得快，但难审查、难撤销。
+  你可以为一次 AI 会话建立 baseline，打开专门的 diff 视图，按文件检查改动，并按文件或按代码块执行 revert。现在你也可以在发送前把文件附件、粘贴图片和项目路径一起整理好，再送进当前 CLI 会话。
 </p>
 
 <p align="center">
-  同时，VibeCliEditor 也把文件树、编辑器、集成终端和 AI CLI 入口放进同一个桌面工作区里，让你可以浏览文件、选中目标、查看 diff，并把文件路径快速送进终端工作流，而不需要在多个窗口和上下文之间来回切换。
+  VibeCliEditor 把文件树、编辑器、集成终端、AI CLI 入口，以及新的 composer 输入流整合到同一个桌面界面中，让你可以浏览文件、选中目标、查看 diff、附加正确的文件，并把整个工作流留在一个窗口里完成。
 </p>
 
 <p align="center">
   <img src="public/vibe-cli-editor-snapshot.png" alt="VibeCliEditor snapshot" width="100%" />
 </p>
 
-> 核心意图：让 `codex` / Claude Code 会话里的改动变得可审查、可还原，同时也让你更轻松地把正确的项目文件带进 AI 驱动的开发循环。
+> 核心意图：让 `codex` / Claude Code 会话里的改动可审查、可回退，也让项目文件、截图和提示词上下文更容易进入同一条 AI 开发链路。
 
 ## 项目为什么存在
 
-在普通终端工作流里，AI CLI 工具很擅长生成和修改代码，但在一个重复动作上体验并不好：
+在普通终端工作流里，AI CLI 工具很擅长生成和修改代码，但在几个重复动作上体验并不好：
 
 - 在项目里找到正确的文件
-- 判断下一个应该引用哪个文件或目录
-- 再把这些路径快速送回终端输入中
+- 判断下一个该引用哪个文件、目录或截图
+- 再把这些路径或粘贴进来的图片快速送回当前终端提示词
 
-VibeCliEditor 就是围绕这个缺口设计的。会话级 diff 工作流负责解决“怎么审查、怎么还原”这类核心问题，左侧 Explorer、工作区搜索和终端集成则负责更快定位文件，并把选中的路径更顺手地送进当前 AI 会话。
+VibeCliEditor 就是围绕这个缺口设计的。会话级 diff 工作流负责解决“怎么审查、怎么还原”，Explorer、工作区搜索、终端集成，以及 composer 的附件能力则负责更快地定位文件并把正确上下文带进当前 AI 会话。
 
 ## 功能特性
 
+- 面向 `codex` / `claude` 的 Terminal Composer，支持草稿保留、附件选择、图片粘贴、缩略图预览和提示词插入
 - 面向 AI 编码会话的 session diff 工作流，支持 baseline 建立、专用 diff 视图和还原操作
 - 支持按文件和按代码块回退 `codex` / `claude` 工作流中的改动
 - 基于 Tauri 2、React 19、TypeScript 和 Rust 的桌面工作区
@@ -80,14 +92,20 @@ VibeCliEditor/
 
 ## 快速开始
 
-### 环境要求
+### 安装打包版（仅 Windows）
+
+- 前往 [Releases](https://github.com/jipeigong/VibeJTerminal/releases/latest) 下载最新打包版本
+- 安装其中的 `.exe` 或 `.msi`
+- 如果你想使用快捷启动入口，请确保本机 `PATH` 中已经有 `codex` 和/或 `claude`
+
+### 源码开发环境要求
 
 - Node.js
 - pnpm
 - Rust toolchain
 - Tauri development environment
 
-当前项目主要在 Windows 桌面环境下开发和验证。
+当前项目和当前打包版都主要在 Windows 桌面环境下开发与验证。
 
 ### 安装依赖
 
@@ -155,13 +173,7 @@ pnpm tauri build
 
 ## 许可证
 
-当前仓库还没有附带 `LICENSE` 文件。
-
-如果你准备公开发布，建议在发布前补上一份明确的开源许可证，例如：
-
-- MIT
-- Apache-2.0
-- GPL-3.0
+VibeCliEditor 采用 MIT License。详见 [LICENSE](./LICENSE)。
 
 ## 致谢
 

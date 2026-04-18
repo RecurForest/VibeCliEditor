@@ -1,6 +1,6 @@
 [package]
 name = "VibeCliEditor"
-version = "1.1.0"
+version = "1.2.0"
 description = "VibeCliEditor desktop workspace built with Tauri and React"
 authors = ["jipei"]
 edition = "2021"

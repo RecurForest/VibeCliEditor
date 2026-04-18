@@ -6,37 +6,49 @@ English | [简体中文](./README.zh-CN.md)
   <img src="src/assets/vibe-cli-editor-logo.svg" alt="VibeCliEditor logo" width="96" />
 </p>
 
+> [!IMPORTANT]
+> Quick install on Windows: download the latest packaged build from [Releases](https://github.com/jipeigong/VibeJTerminal/releases/latest), install the `.exe` or `.msi` asset, then make sure `codex` and/or `claude` is available in your `PATH`.
+> The packaged app currently supports Windows only.
+
+## Key Highlights
+
+- Terminal Composer built for `codex` and Claude Code CLI sessions, with a dedicated prompt input area inside the terminal workspace
+- Add attachments from the file picker, paste local file paths, or paste screenshots and images directly from the clipboard
+- Clipboard files are written to temporary attachment paths automatically before submit, so attachment handoff works cleanly in terminal AI workflows
+- Session diff baseline, dedicated diff view, and file-level or hunk-level revert keep agent changes auditable and reversible
+
 <p align="center">
-  <strong>VibeCliEditor's defining feature is its AI session diff workflow.</strong>
-  In vibe coding with <code>codex</code> or Claude Code (<code>claude</code>), the hard part is not only generating code, but being able to review what the agent changed and safely roll it back. VibeCliEditor makes those terminal-driven changes visible, reviewable, and reversible inside one workspace.
+  <strong>VibeCliEditor pairs an AI session diff workflow with a practical terminal composer for Codex and Claude Code.</strong>
+  In vibe coding with <code>codex</code> or Claude Code (<code>claude</code>), the hard part is not only generating code, but also attaching the right context, reviewing what the agent changed, and safely rolling it back. VibeCliEditor makes those terminal-driven interactions visible, reviewable, and reversible inside one workspace.
 </p>
 
 <p align="center">
-  You can capture a baseline for an AI session, open a dedicated diff view, inspect changes file by file, and revert either a whole file or a single hunk. This directly addresses one of the biggest pain points in <code>codex</code> / Claude Code workflows: code changes happen fast, but they are hard to audit and hard to undo.
+  You can capture a baseline for an AI session, open a dedicated diff view, inspect changes file by file, and revert either a whole file or a single hunk. You can also prepare prompts with file attachments, pasted images, and workspace path inserts before sending them into the active CLI session.
 </p>
 
 <p align="center">
-  VibeCliEditor also combines the file tree, editor, integrated terminal, and AI CLI entry points into one desktop workspace so you can browse files, select targets, inspect diffs, and insert file paths into the terminal workflow without constantly switching contexts.
+  VibeCliEditor combines the file tree, editor, integrated terminal, AI CLI entry points, and the new composer input flow into one desktop workspace so you can browse files, select targets, inspect diffs, attach the right files, and keep the whole workflow in one place.
 </p>
 
 <p align="center">
   <img src="public/vibe-cli-editor-snapshot.png" alt="VibeCliEditor snapshot" width="100%" />
 </p>
 
-> Core intent: make `codex` / Claude Code sessions auditable and reversible, while also making it much easier to bring the right project files into an AI-driven development loop.
+> Core intent: make `codex` / Claude Code sessions auditable, reversible, and much easier to drive with the right project files, screenshots, and prompt context.
 
 ## Why It Exists
 
-In a normal terminal workflow, AI CLI tools are strong at generating and editing code, but weak at one repetitive interaction:
+In a normal terminal workflow, AI CLI tools are strong at generating and editing code, but weak at a few repetitive interactions:
 
 - finding the right files in a project
-- deciding which file or directory should be referenced next
-- quickly feeding those paths back into the terminal prompt
+- deciding which file, directory, or screenshot should be referenced next
+- quickly feeding those paths or pasted images back into the active terminal prompt
 
-VibeCliEditor is built around that gap. The session diff workflow solves the review and rollback problem, while the Explorer, workspace search, and terminal integration make it much easier to find files and feed the right paths back into the active AI session.
+VibeCliEditor is built around that gap. The session diff workflow solves the review and rollback problem, while the Explorer, workspace search, terminal integration, and composer attachment flow make it much easier to find files and bring the right context into the active AI session.
 
 ## Features
 
+- Terminal Composer with draft persistence, attachment picker, clipboard image paste, inline previews, and prompt insertion for `codex` / `claude`
 - Session diff workflow for AI coding sessions, with baseline capture, dedicated diff view, and revert support
 - File-level and hunk-level rollback for changes made during `codex` / `claude` workflows
 - Desktop workspace built with Tauri 2, React 19, TypeScript, and Rust
@@ -80,16 +92,22 @@ VibeCliEditor/
 
 ## Getting Started
 
-### Requirements
+### Install Packaged Release (Windows only)
+
+- Download the latest packaged build from [Releases](https://github.com/jipeigong/VibeJTerminal/releases/latest)
+- Install the `.exe` or `.msi` asset
+- Make sure `codex` and/or `claude` is available in your local `PATH` if you want to use the quick-launch actions
+
+### Requirements For Source Development
 
 - Node.js
 - pnpm
 - Rust toolchain
 - Tauri development environment
 
-The project is currently developed and validated primarily on Windows desktop.
+The project and the packaged app are currently developed and validated primarily on Windows desktop.
 
-### Install
+### Install Dependencies
 
 ```bash
 pnpm install
@@ -155,13 +173,7 @@ Useful contribution areas:
 
 ## License
 
-This repository does not currently include a `LICENSE` file.
-
-If you plan to publish it publicly, add an explicit open-source license before release, for example:
-
-- MIT
-- Apache-2.0
-- GPL-3.0
+VibeCliEditor is licensed under the MIT License. See [LICENSE](./LICENSE).
 
 ## Acknowledgements
 

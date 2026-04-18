@@ -91,7 +91,7 @@ Rust Services
 - `shellKind` 在这里被硬编码成 `cmd`。
 - `Session Diff` 和普通文件 tab 共用同一套标签栏、关闭逻辑和激活逻辑。
 - 工作区切换时会清空编辑器状态，并让终端 hook 关闭现有 session。
-- App 已经接入了一整套 Terminal Composer 的解析与 profile 逻辑，但当前传给 `TerminalPane` 的 `composerEnabled` 是 `false`，所以主界面没有把这套输入 UI 打开。
+- App 已经接入了一整套 Terminal Composer 的解析与 profile 逻辑，当前传给 `TerminalPane` 的 `composerEnabled` 是 `true`，主界面默认会显示这套输入 UI。
 
 ### `src/components/FileTree/useFileTree.ts`
 
@@ -334,7 +334,7 @@ Markdown 渲染辅助模块。
 - 右侧终端默认会把当前工作区的 session 列表和选中态持久化到 `localStorage`；刷新页面后：
   - 历史会恢复
   - 之前仍是 `active` 的 session 会被视为 `completed`
-- `sendRawText()` / `sendToSelectedSession()` 支持多种发送策略，但当前主界面没有把 composer UI 打开。
+- `sendRawText()` / `sendToSelectedSession()` 支持多种发送策略；当 composer 目标是 shell 或 shell launcher 时，主界面会暴露发送策略选择。
 - `startAgentSession()` 会根据 `AgentSessionProfile` 构造实际 CLI 进程：
   - `codex`
   - `claude`
@@ -370,7 +370,7 @@ Markdown 渲染辅助模块。
 需要注意的当前行为：
 
 - Diff 相关按钮不在这个组件里，而是在 `App.tsx` 的标题栏右上角。
-- `composerEnabled` 虽然作为 prop 存在，但 App 当前传的是 `false`。
+- `composerEnabled` 虽然作为 prop 存在，但 App 当前传的是 `true`。
 
 ### `src/components/TerminalPane/InlineCmdTerminal.tsx`
 
@@ -441,7 +441,7 @@ AI CLI 启动参数构造模块。
 
 可以把它们视为：
 
-- 已实现但尚未接入可见 UI 的 composer 输入链路
+- 已实现并接入主终端可见 UI 的 composer 输入链路
 - 后续可能启用的 agent prompt / slash command / 发送策略基础设施
 
 当前不属于用户默认可见主流程。
@@ -941,7 +941,7 @@ Windows 路径兼容辅助。
 
 ### `docs/TERMINAL_COMPOSER_EXECUTION_PLAN.md`
 
-这是 Terminal Composer 方向的设计 / 执行文档，不代表当前主界面已经把 composer UI 打开。
+这是 Terminal Composer 方向的设计 / 执行文档；当前主界面已经把 composer UI 打开。
 
 ### `UI-code/`
 
@@ -973,7 +973,7 @@ Windows 路径兼容辅助。
 - Session Diff 能展示“会话期间的工作区变化”，但不能严格区分 AI 修改和人工修改。
 - 后端没有真实终端退出码，也没有实时同步 shell 内部 cwd。
 - 右侧终端和底部内联终端彼此独立，不共享 session 历史。
-- Terminal Composer 相关代码已经存在，但当前默认 UI 没有启用。
+- Terminal Composer 相关代码已经存在，且当前默认 UI 已启用。
 - `ActivityBar.tsx` 和 `Toolbar.tsx` 还在仓库里，但已经不代表当前主布局。
 
 ## 9. 快速定位

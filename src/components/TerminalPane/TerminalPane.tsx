@@ -2,25 +2,15 @@ import "@xterm/xterm/css/xterm.css";
 import { History, Plus, SquareTerminal, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type Ref } from "react";
 import type { TerminalSessionRecord } from "../../types";
-import { TerminalComposer, type TerminalComposerInsertRequest } from "./TerminalComposer";
-import type {
-  TerminalComposerSendStrategy,
-  TerminalComposerSendStrategyOption,
-} from "./terminalComposerSendStrategy";
+import { TerminalComposer } from "./TerminalComposer";
 
 interface TerminalPaneProps {
   canLaunch: boolean;
   composerEnabled: boolean;
-  composerExternalInsertRequest?: TerminalComposerInsertRequest | null;
+  composerExternalInsertSequence?: number;
+  composerExternalInsertText?: string;
   composerPlaceholder?: string;
-  composerQuickActions?: Array<{
-    label: string;
-    text: string;
-  }>;
-  composerSendStrategy?: TerminalComposerSendStrategy;
-  composerSendStrategyOptions?: TerminalComposerSendStrategyOption[];
   onComposerSubmit: (text: string) => Promise<void>;
-  onComposerSendStrategyChange?: (strategy: TerminalComposerSendStrategy) => void;
   containerRef: Ref<HTMLDivElement>;
   error: string | null;
   getTerminalSelectionText: () => string;
@@ -45,11 +35,9 @@ interface TerminalPaneProps {
 export function TerminalPane({
   canLaunch,
   composerEnabled,
-  composerExternalInsertRequest,
+  composerExternalInsertSequence = 0,
+  composerExternalInsertText = "",
   composerPlaceholder,
-  composerQuickActions,
-  composerSendStrategy,
-  composerSendStrategyOptions,
   containerRef,
   error,
   getTerminalSelectionText,
@@ -59,7 +47,6 @@ export function TerminalPane({
   onClear,
   onClose,
   onCodex,
-  onComposerSendStrategyChange,
   onComposerSubmit,
   onCopySelection,
   onFocus,
@@ -127,24 +114,72 @@ export function TerminalPane({
   }
 
   const emptyState = !workingDir ? (
-    <div className="terminal__empty-card">
-      <div className="terminal__empty-title">No workspace selected</div>
+    <div className="terminal__empty-card terminal__empty-card--launch">
+      <div className="terminal__empty-title">Open a workspace and start</div>
       <div className="terminal__empty-copy">
-        Open a folder first, then you can launch an integrated terminal for that project.
+        Choose a workspace folder first. After that, Codex or Claude Code will open automatically.
+      </div>
+      <div className="terminal__empty-actions">
+        <button
+          className="terminal__empty-action terminal__empty-action--primary"
+          onClick={onCodex}
+          type="button"
+        >
+          Open Codex
+        </button>
+        <button
+          className="terminal__empty-action"
+          onClick={onClaude}
+          type="button"
+        >
+          Open Claude Code
+        </button>
       </div>
     </div>
   ) : !hasSessions ? (
-    <div className="terminal__empty-card">
-      <div className="terminal__empty-title">Terminal not started</div>
+    <div className="terminal__empty-card terminal__empty-card--launch">
+      <div className="terminal__empty-title">Start an AI session</div>
       <div className="terminal__empty-copy">
-        Use the terminal toolbar here to open a shell, Codex, or Claude Code in the current workspace.
+        The terminal stays blank until you open Codex or Claude Code for this workspace.
+      </div>
+      <div className="terminal__empty-actions">
+        <button
+          className="terminal__empty-action terminal__empty-action--primary"
+          onClick={onCodex}
+          type="button"
+        >
+          Open Codex
+        </button>
+        <button
+          className="terminal__empty-action"
+          onClick={onClaude}
+          type="button"
+        >
+          Open Claude Code
+        </button>
       </div>
     </div>
   ) : !selectedSession ? (
-    <div className="terminal__empty-card">
-      <div className="terminal__empty-title">No session selected</div>
+    <div className="terminal__empty-card terminal__empty-card--launch">
+      <div className="terminal__empty-title">Start a new AI session</div>
       <div className="terminal__empty-copy">
-        Open the history list and switch to an existing terminal session.
+        Previous terminal history is available from the list above. Open Codex or Claude Code to start a fresh session here.
+      </div>
+      <div className="terminal__empty-actions">
+        <button
+          className="terminal__empty-action terminal__empty-action--primary"
+          onClick={onCodex}
+          type="button"
+        >
+          Open Codex
+        </button>
+        <button
+          className="terminal__empty-action"
+          onClick={onClaude}
+          type="button"
+        >
+          Open Claude Code
+        </button>
       </div>
     </div>
   ) : null;
@@ -304,13 +339,11 @@ export function TerminalPane({
       {composerEnabled ? (
         <TerminalComposer
           canSubmit={Boolean(workingDir)}
-          externalInsertRequest={composerExternalInsertRequest}
-          onSendStrategyChange={onComposerSendStrategyChange}
+          externalInsertSequence={composerExternalInsertSequence}
+          externalInsertText={composerExternalInsertText}
           onSubmit={onComposerSubmit}
           placeholder={composerPlaceholder}
-          quickActions={composerQuickActions}
-          sendStrategy={composerSendStrategy}
-          sendStrategyOptions={composerSendStrategyOptions}
+          workingDir={workingDir}
         />
       ) : null}
 
