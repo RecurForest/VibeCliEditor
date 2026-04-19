@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 use crate::models::file_node::FileNode;
 use crate::models::file_search_result::FileSearchResult;
+use crate::models::text_search_result::TextSearchResult;
 use crate::services::paths::path_to_string;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -19,6 +20,9 @@ pub struct ClipboardPasteFile {
 }
 
 const COMPOSER_ATTACHMENT_TEMP_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24 * 3);
+const TEXT_SEARCH_CONTEXT_LINES: usize = 2;
+const TEXT_SEARCH_MAX_FILE_BYTES: u64 = 1_024 * 1_024;
+const TEXT_SEARCH_MAX_MATCHES_PER_FILE: usize = 20;
 
 pub fn scan_root(root: &Path) -> Result<FileNode, String> {
     let root = normalize_directory(root)?;
@@ -291,6 +295,41 @@ pub fn search_files(
         .take(limit)
         .map(|(_, item)| item)
         .collect())
+}
+
+pub fn search_text_in_files(
+    root: &Path,
+    query: &str,
+    file_mask: Option<&str>,
+    limit: usize,
+) -> Result<Vec<TextSearchResult>, String> {
+    let root = normalize_directory(root)?;
+    let trimmed_query = query.trim();
+
+    if trimmed_query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let normalized_query = normalize_search_text(trimmed_query);
+    let normalized_file_masks = normalize_text_search_file_masks(file_mask);
+    let mut matches = Vec::new();
+    collect_text_search_matches(
+        &root,
+        &root,
+        &normalized_query,
+        &normalized_file_masks,
+        trimmed_query.chars().count().max(1),
+        limit,
+        &mut matches,
+    )?;
+    matches.sort_by(|left, right| {
+        left.rel_path
+            .cmp(&right.rel_path)
+            .then_with(|| left.line.cmp(&right.line))
+            .then_with(|| left.column.cmp(&right.column))
+    });
+
+    Ok(matches)
 }
 
 fn build_node(root: &Path, path: &Path, include_children: bool) -> Result<FileNode, String> {
@@ -614,6 +653,100 @@ fn is_hidden(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn normalize_text_search_file_masks(file_mask: Option<&str>) -> Vec<String> {
+    file_mask
+        .unwrap_or("")
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .collect()
+}
+
+fn matches_text_search_file_masks(path: &Path, file_masks: &[String]) -> bool {
+    if file_masks.is_empty()
+        || file_masks
+            .iter()
+            .any(|mask| mask == "*" || mask == "*.*")
+    {
+        return true;
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let extension = path
+        .extension()
+        .map(|value| value.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    file_masks.iter().any(|mask| {
+        if let Some(mask_extension) = mask.strip_prefix("*.") {
+            return extension == mask_extension;
+        }
+
+        if let Some(mask_extension) = mask.strip_prefix('.') {
+            return extension == mask_extension;
+        }
+
+        if let Some(suffix) = mask.strip_prefix('*') {
+            return !suffix.is_empty() && file_name.ends_with(suffix);
+        }
+
+        file_name == *mask || file_name.ends_with(mask)
+    })
+}
+
+fn is_ignored_text_search_dir(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("node_modules" | "dist" | "target" | "coverage" | "build")
+    )
+}
+
+fn is_ignored_text_search_file(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some(
+            "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "webp"
+                | "bmp"
+                | "ico"
+                | "avif"
+                | "pdf"
+                | "zip"
+                | "gz"
+                | "tar"
+                | "7z"
+                | "rar"
+                | "woff"
+                | "woff2"
+                | "ttf"
+                | "otf"
+                | "mp3"
+                | "mp4"
+                | "mov"
+                | "avi"
+                | "exe"
+                | "dll"
+                | "so"
+                | "dylib"
+                | "bin"
+                | "class"
+                | "jar"
+                | "pyc"
+                | "lockb"
+        )
+    )
+}
+
 fn collect_search_matches(
     root: &Path,
     current_dir: &Path,
@@ -648,6 +781,128 @@ fn collect_search_matches(
                     rel_path: relative,
                 },
             ));
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_text_search_matches(
+    root: &Path,
+    current_dir: &Path,
+    normalized_query: &str,
+    file_masks: &[String],
+    match_length: usize,
+    limit: usize,
+    matches: &mut Vec<TextSearchResult>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(current_dir).map_err(|error| error.to_string())? {
+        if matches.len() >= limit {
+            break;
+        }
+
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+
+        if is_hidden(&path) {
+            continue;
+        }
+
+        if path.is_dir() {
+            if is_ignored_text_search_dir(&path) {
+                continue;
+            }
+
+            collect_text_search_matches(
+                root,
+                &path,
+                normalized_query,
+                file_masks,
+                match_length,
+                limit,
+                matches,
+            )?;
+            continue;
+        }
+
+        if is_ignored_text_search_file(&path) || !matches_text_search_file_masks(&path, file_masks) {
+            continue;
+        }
+
+        collect_text_file_matches(root, &path, normalized_query, match_length, limit, matches)?;
+    }
+
+    Ok(())
+}
+
+fn collect_text_file_matches(
+    root: &Path,
+    path: &Path,
+    normalized_query: &str,
+    match_length: usize,
+    limit: usize,
+    matches: &mut Vec<TextSearchResult>,
+) -> Result<(), String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok(()),
+    };
+
+    if metadata.len() > TEXT_SEARCH_MAX_FILE_BYTES {
+        return Ok(());
+    }
+
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(_) => return Ok(()),
+    };
+    let lines = content.lines().collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    let relative = relative_path(root, path);
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| path_to_string(path));
+    let abs_path = path_to_string(path);
+    let mut matches_in_file = 0usize;
+
+    for (line_index, line_text) in lines.iter().enumerate() {
+        if matches.len() >= limit || matches_in_file >= TEXT_SEARCH_MAX_MATCHES_PER_FILE {
+            break;
+        }
+
+        let normalized_line = normalize_search_text(line_text);
+        let mut search_offset = 0usize;
+
+        while matches.len() < limit && matches_in_file < TEXT_SEARCH_MAX_MATCHES_PER_FILE {
+            let Some(relative_index) = normalized_line[search_offset..].find(normalized_query) else {
+                break;
+            };
+            let byte_index = search_offset + relative_index;
+            let column = line_text[..byte_index].chars().count() + 1;
+            let preview_start_index = line_index.saturating_sub(TEXT_SEARCH_CONTEXT_LINES);
+            let preview_end_index =
+                usize::min(line_index + TEXT_SEARCH_CONTEXT_LINES, lines.len().saturating_sub(1));
+            let preview = lines[preview_start_index..=preview_end_index].join("\n");
+
+            matches.push(TextSearchResult {
+                name: name.clone(),
+                abs_path: abs_path.clone(),
+                rel_path: relative.clone(),
+                line: line_index + 1,
+                column,
+                match_length,
+                line_text: (*line_text).to_string(),
+                preview,
+                preview_start_line: preview_start_index + 1,
+            });
+
+            matches_in_file += 1;
+            search_offset = byte_index.saturating_add(normalized_query.len());
         }
     }
 

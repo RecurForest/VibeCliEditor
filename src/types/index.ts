@@ -42,6 +42,18 @@ export interface FileSearchResult {
   relPath: string;
 }
 
+export interface TextSearchResult {
+  absPath: string;
+  name: string;
+  relPath: string;
+  line: number;
+  column: number;
+  matchLength: number;
+  lineText: string;
+  preview: string;
+  previewStartLine: number;
+}
+
 export interface TerminalSessionInfo {
   sessionId: string;
   shellKind: ShellKind;
@@ -132,9 +144,72 @@ export interface SessionDiffTab {
   tabType: "sessionDiff";
 }
 
-export type WorkbenchTab = EditorTab | SessionDiffTab;
+export type GitChangeStatus = "added" | "deleted" | "modified" | "renamed";
+
+export type GitChangeGroup = "changes" | "unversioned";
+
+export interface GitChangeEntry {
+  path: string;
+  absPath: string;
+  status: GitChangeStatus;
+  group: GitChangeGroup;
+  previousPath: string | null;
+}
+
+export interface GitRepositoryChanges {
+  rootPath: string;
+  name: string;
+  relativePath: string;
+  branch: string;
+  changes: GitChangeEntry[];
+  unversioned: GitChangeEntry[];
+}
+
+export interface GitChangesResult {
+  rootPath: string;
+  hasRepository: boolean;
+  repositories: GitRepositoryChanges[];
+}
+
+export interface GitDiffResult {
+  rootPath: string;
+  branch: string;
+  path: string;
+  absPath: string;
+  status: GitChangeStatus;
+  group: GitChangeGroup;
+  previousPath: string | null;
+  isBinary: boolean;
+  tooLarge: boolean;
+  originalContent: string | null;
+  modifiedContent: string | null;
+}
+
+export interface GitCommitResult {
+  branch: string;
+  commitOid: string;
+  summary: string;
+}
+
+export interface GitDiffTab {
+  id: string;
+  name: string;
+  relPath: string;
+  result: GitDiffResult;
+  tabType: "gitDiff";
+}
+
+export type WorkbenchTab = EditorTab | SessionDiffTab | GitDiffTab;
 
 export interface CursorPosition {
   line: number;
   column: number;
+}
+
+export interface EditorNavigationRequest {
+  id: number;
+  absPath: string;
+  line: number;
+  column: number;
+  matchLength: number;
 }

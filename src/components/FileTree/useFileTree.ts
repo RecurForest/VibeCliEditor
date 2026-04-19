@@ -238,6 +238,26 @@ export function useFileTree({
     });
   }
 
+  function handleExplorerBackgroundClick() {
+    setContextMenu(null);
+    setSelectedPaths([]);
+  }
+
+  function handleExplorerBackgroundContextMenu(x: number, y: number) {
+    const rootNode = rootNodeRef.current;
+    if (!rootNode) {
+      return;
+    }
+
+    setSelectedPaths([]);
+    setContextMenu({
+      targetNode: rootNode,
+      targetPath: rootNode.absPath,
+      x,
+      y,
+    });
+  }
+
   async function quickInsert(node: FileNode) {
     try {
       await onInsertPaths([node.absPath]);
@@ -248,13 +268,10 @@ export function useFileTree({
   }
 
   async function insertContextSelection() {
-    if (!contextMenu) {
+    const paths = resolveContextSelectionPaths();
+    if (!paths.length) {
       return;
     }
-
-    const paths = selectedPaths.includes(contextMenu.targetPath)
-      ? selectedPaths
-      : [contextMenu.targetPath];
 
     try {
       await onInsertPaths(paths);
@@ -273,6 +290,38 @@ export function useFileTree({
     try {
       await onInsertPaths(selectedPaths);
       setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  function resolveContextSelectionPaths() {
+    if (!contextMenu) {
+      return [];
+    }
+
+    return selectedPathsRef.current.includes(contextMenu.targetPath)
+      ? selectedPathsRef.current
+      : [contextMenu.targetPath];
+  }
+
+  async function copyContextSelection() {
+    const sourcePaths = Array.from(
+      new Set(resolveContextSelectionPaths().map((path) => path.trim()).filter(Boolean)),
+    );
+    if (!sourcePaths.length) {
+      return;
+    }
+
+    if (!navigator.clipboard?.writeText) {
+      setError("Clipboard write is not available.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(sourcePaths.join("\r\n"));
+      setError(null);
+      setContextMenu(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -419,16 +468,34 @@ export function useFileTree({
   }
 
   async function deleteContextSelection() {
-    if (!rootPath || !contextMenu) {
+    if (!contextMenu) {
+      return;
+    }
+
+    const targetPaths = selectedPathsRef.current.includes(contextMenu.targetPath)
+      ? selectedPathsRef.current
+      : [contextMenu.targetPath];
+
+    await deletePaths(targetPaths, { closeContextMenuOnCancel: true });
+  }
+
+  async function deleteSelection() {
+    await deletePaths(selectedPathsRef.current);
+  }
+
+  async function deletePaths(
+    paths: string[],
+    options: {
+      closeContextMenuOnCancel?: boolean;
+    } = {},
+  ) {
+    if (!rootPath) {
       return;
     }
 
     const workspaceRootPath = rootNodeRef.current?.absPath ?? rootPath;
     const targetPaths = collapseDeleteTargets(
-      (selectedPathsRef.current.includes(contextMenu.targetPath)
-        ? selectedPathsRef.current
-        : [contextMenu.targetPath]
-      ).filter((path) => !isWorkspaceRootPath(path, workspaceRootPath)),
+      paths.filter((path) => !isWorkspaceRootPath(path, workspaceRootPath)),
     );
 
     if (!targetPaths.length) {
@@ -441,7 +508,9 @@ export function useFileTree({
         : `Delete ${targetPaths.length} selected items?`;
 
     if (!window.confirm(confirmMessage)) {
-      setContextMenu(null);
+      if (options.closeContextMenuOnCancel) {
+        setContextMenu(null);
+      }
       return;
     }
 
@@ -576,6 +645,9 @@ export function useFileTree({
   }
 
   const workspaceRootPath = rootNodeRef.current?.absPath ?? rootPath;
+  const deletableSelectionPaths = collapseDeleteTargets(
+    selectedPaths.filter((path) => !isWorkspaceRootPath(path, workspaceRootPath)),
+  );
   const contextSelectionPaths = contextMenu
     ? selectedPaths.includes(contextMenu.targetPath)
       ? selectedPaths
@@ -588,18 +660,24 @@ export function useFileTree({
 
   return {
     canCreateInContextTarget: Boolean(contextMenu?.targetNode.isDir),
+    canCopyContextSelection: Boolean(contextMenu),
     canDeleteContextSelection: deletableContextPaths.length > 0,
+    canDeleteSelection: deletableSelectionPaths.length > 0,
     canPasteIntoContextTarget: Boolean(rootPath && contextPasteTargetDirectory),
     canRenameContextTarget: Boolean(
       contextMenu && !isWorkspaceRootPath(contextMenu.targetPath, workspaceRootPath),
     ),
     closeContextMenu: () => setContextMenu(null),
+    copyContextSelection,
     contextMenu,
     createContextFile: () => createContextItem("file"),
     createContextFolder: () => createContextItem("folder"),
     deleteContextSelection,
+    deleteSelection,
     error,
     expandedPaths,
+    handleExplorerBackgroundClick,
+    handleExplorerBackgroundContextMenu,
     handleNodeClick,
     handleNodeContextMenu,
     insertContextSelection,

@@ -34,6 +34,10 @@
   <img src="public/vibe-cli-editor-snapshot.png" alt="VibeCliEditor snapshot" width="100%" />
 </p>
 
+<p align="center">
+  <img src="public/vibe-cli-editor-snapshot-1.png" alt="VibeCliEditor snapshot 2" width="100%" />
+</p>
+
 > 核心意图：让 `codex` / Claude Code 会话里的改动可审查、可回退，也让项目文件、截图和提示词上下文更容易进入同一条 AI 开发链路。
 
 ## 项目为什么存在

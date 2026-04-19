@@ -106,6 +106,30 @@ export function resolveEditorLanguage(fileName?: string) {
       return "typescript";
     case "java":
       return "java";
+    case "py":
+      return "python";
+    case "go":
+      return "go";
+    case "php":
+      return "php";
+    case "rb":
+      return "ruby";
+    case "sql":
+      return "sql";
+    case "c":
+      return "c";
+    case "h":
+      return "c";
+    case "cpp":
+    case "cc":
+    case "cxx":
+    case "hpp":
+      return "cpp";
+    case "cs":
+      return "csharp";
+    case "kt":
+    case "kts":
+      return "kotlin";
     case "xml":
     case "svg":
     case "xsd":

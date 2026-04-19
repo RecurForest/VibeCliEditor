@@ -34,6 +34,10 @@ English | [简体中文](./README.zh-CN.md)
   <img src="public/vibe-cli-editor-snapshot.png" alt="VibeCliEditor snapshot" width="100%" />
 </p>
 
+<p align="center">
+  <img src="public/vibe-cli-editor-snapshot-1.png" alt="VibeCliEditor snapshot 2" width="100%" />
+</p>
+
 > Core intent: make `codex` / Claude Code sessions auditable, reversible, and much easier to drive with the right project files, screenshots, and prompt context.
 
 ## Why It Exists

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { DiffEditor } from "@monaco-editor/react";
-import { ArrowDown, ArrowUp, LoaderCircle, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, LoaderCircle, RotateCcw, Save } from "lucide-react";
+import { type WheelEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IDisposable, editor } from "monaco-editor";
 import type { SessionDiffFile, SessionDiffResult } from "../../types";
 import { FileIcon } from "../FileIcon/FileIcon";
@@ -10,10 +10,11 @@ import { MONACO_THEME, resolveEditorLanguage } from "../Editor/monaco";
 interface DiffViewerPaneProps {
   result: SessionDiffResult;
   sessionTitle?: string | null;
-  onSessionDiffFilesReverted?: (payload: {
+  onSessionDiffFilesChanged?: (payload: {
     paths: string[];
     sessionId: string;
   }) => Promise<void>;
+  onDirtyStateChange?: (dirty: boolean) => void;
 }
 
 interface DiffPoint {
@@ -75,7 +76,12 @@ interface HunkOverlay {
   top: number;
 }
 
-type BusyAction = `hunk:${string}` | "file" | "all" | null;
+interface EditableDraft {
+  baseContent: string;
+  content: string;
+}
+
+type BusyAction = `hunk:${string}` | "file" | "all" | "save" | null;
 
 type DiffEditorWithInternals = editor.IStandaloneDiffEditor & {
   _diffModel?: {
@@ -109,7 +115,7 @@ const DIFF_EDITOR_OPTIONS: editor.IDiffEditorConstructionOptions = {
   minimap: { enabled: false },
   originalEditable: false,
   padding: { bottom: 12, top: 12 },
-  readOnly: true,
+  readOnly: false,
   renderIndicators: false,
   renderMarginRevertIcon: false,
   renderOverviewRuler: false,
@@ -133,12 +139,16 @@ const diffSelectedPathBySessionId = new Map<string, string>();
 export function DiffViewerPane({
   result,
   sessionTitle,
-  onSessionDiffFilesReverted,
+  onSessionDiffFilesChanged,
+  onDirtyStateChange,
 }: DiffViewerPaneProps) {
   void sessionTitle;
 
   const [selectedPath, setSelectedPath] = useState<string | null>(
     () => diffSelectedPathBySessionId.get(result.sessionId) ?? result.files[0]?.path ?? null,
+  );
+  const [modifiedDraftsByPath, setModifiedDraftsByPath] = useState<Record<string, EditableDraft>>(
+    {},
   );
   const [diffPoints, setDiffPoints] = useState<DiffPoint[]>([]);
   const [lastNavigatedChangeIndex, setLastNavigatedChangeIndex] = useState<number | null>(null);
@@ -150,7 +160,7 @@ export function DiffViewerPane({
   const diffEditorRef = useRef<DiffEditorWithInternals | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const editorShellRef = useRef<HTMLDivElement | null>(null);
-  const fileListRef = useRef<HTMLDivElement | null>(null);
+  const fileStripRef = useRef<HTMLDivElement | null>(null);
   const originalDecorationIdsRef = useRef<string[]>([]);
   const modifiedDecorationIdsRef = useRef<string[]>([]);
   const disposablesRef = useRef<IDisposable[]>([]);
@@ -158,6 +168,7 @@ export function DiffViewerPane({
   const preparedHunksRef = useRef<PreparedHunk[]>([]);
   const overlayFrameRef = useRef<number | null>(null);
   const diffViewStateKeyRef = useRef<string | null>(null);
+  const modifiedDraftsRef = useRef<Record<string, EditableDraft>>({});
 
   useEffect(() => {
     setSelectedPath((currentPath) => {
@@ -174,12 +185,42 @@ export function DiffViewerPane({
     });
   }, [result]);
 
+  useEffect(() => {
+    modifiedDraftsRef.current = modifiedDraftsByPath;
+  }, [modifiedDraftsByPath]);
+
+  useEffect(() => {
+    setModifiedDraftsByPath({});
+  }, [result.sessionId]);
+
+  useEffect(() => {
+    setModifiedDraftsByPath((currentDrafts) => syncEditableDrafts(currentDrafts, result.files));
+  }, [result.files]);
+
+  const hasDirtyDrafts = useMemo(
+    () => Object.values(modifiedDraftsByPath).some((draft) => draft.content !== draft.baseContent),
+    [modifiedDraftsByPath],
+  );
+
+  useEffect(() => {
+    onDirtyStateChange?.(hasDirtyDrafts);
+  }, [hasDirtyDrafts, onDirtyStateChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyStateChange?.(false);
+    },
+    [onDirtyStateChange],
+  );
+
   const selectedFile = result.files.find((file) => file.path === selectedPath) ?? result.files[0] ?? null;
   selectedFileRef.current = selectedFile;
   const diffViewStateKey = selectedFile
     ? createDiffEditorViewStateKey(result.sessionId, selectedFile.absPath)
     : null;
   diffViewStateKeyRef.current = diffViewStateKey;
+  const selectedDraft = selectedFile ? modifiedDraftsByPath[selectedFile.path] : null;
+  const selectedModifiedContent = selectedDraft?.content ?? selectedFile?.modifiedContent ?? "";
 
   const selectedFileName = selectedFile ? getDisplayFileName(selectedFile.path) : null;
   const selectedFileLanguage = resolveEditorLanguage(selectedFileName ?? undefined);
@@ -199,6 +240,15 @@ export function DiffViewerPane({
   const selectedFileRevertTitle = selectedFile
     ? getSelectedFileRevertTitle(selectedFile)
     : "Select a changed file first.";
+  const isSelectedFileDirty = Boolean(
+    selectedDraft && selectedDraft.content !== selectedDraft.baseContent,
+  );
+  const canSaveSelectedFile = hasTextPreview && isSelectedFileDirty && !isBusy;
+  const selectedFileSaveTitle = !hasTextPreview
+    ? "This file does not expose a text preview."
+    : isSelectedFileDirty
+      ? "Save the current Target content to disk and refresh the diff."
+      : "No unsaved edits in Target.";
   const revertAllTitle =
     supportedFiles.length === 0
       ? "No revertable files are available in this diff."
@@ -221,16 +271,43 @@ export function DiffViewerPane({
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const fileListElement = fileListRef.current;
-      if (!fileListElement) {
+      const fileStripElement = fileStripRef.current;
+      if (!fileStripElement) {
         return;
       }
 
-      fileListElement.scrollLeft = diffFileListScrollLeftBySessionId.get(result.sessionId) ?? 0;
+      fileStripElement.scrollLeft = diffFileListScrollLeftBySessionId.get(result.sessionId) ?? 0;
     });
 
     return () => window.cancelAnimationFrame(frame);
   }, [result.sessionId, result.files.length]);
+
+  const handleFileStripWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+    const fileStripElement = fileStripRef.current;
+    if (!fileStripElement || fileStripElement.scrollWidth <= fileStripElement.clientWidth) {
+      return;
+    }
+
+    const rawDelta =
+      Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (rawDelta === 0) {
+      return;
+    }
+
+    const multiplier =
+      event.deltaMode === 1
+        ? 16
+        : event.deltaMode === 2
+          ? fileStripElement.clientWidth
+          : 1;
+    const previousScrollLeft = fileStripElement.scrollLeft;
+
+    fileStripElement.scrollLeft += rawDelta * multiplier;
+
+    if (fileStripElement.scrollLeft !== previousScrollLeft) {
+      event.preventDefault();
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -328,7 +405,7 @@ export function DiffViewerPane({
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [diffViewStateKey, selectedFile]);
+  }, [diffViewStateKey, selectedFile, selectedModifiedContent]);
 
   useEffect(() => {
     function handleWindowResize() {
@@ -386,7 +463,23 @@ export function DiffViewerPane({
       modifiedEditor.onDidLayoutChange(() => {
         scheduleHunkOverlayLayout();
       }),
+      modifiedEditor.onDidChangeModelContent(() => {
+        const currentSelectedFile = selectedFileRef.current;
+        if (!currentSelectedFile || currentSelectedFile.modifiedContent === null) {
+          return;
+        }
+
+        setModifiedDraftsByPath((currentDrafts) =>
+          updateEditableDraft(currentDrafts, currentSelectedFile.path, modifiedEditor.getValue()),
+        );
+      }),
     ];
+    modifiedEditor.addCommand(
+      monacoNamespace.KeyMod.CtrlCmd | monacoNamespace.KeyCode.KeyS,
+      () => {
+        void handleSaveSelectedFile();
+      },
+    );
 
     window.requestAnimationFrame(() => {
       refreshDiffEditorState();
@@ -445,7 +538,8 @@ export function DiffViewerPane({
 
     const modelsReady =
       originalModel.getValue() === nextSelectedFile.originalContent &&
-      modifiedModel.getValue() === nextSelectedFile.modifiedContent;
+      modifiedModel.getValue() ===
+        (modifiedDraftsRef.current[nextSelectedFile.path]?.content ?? nextSelectedFile.modifiedContent);
 
     if (!modelsReady) {
       clearDiffDecorations();
@@ -458,7 +552,9 @@ export function DiffViewerPane({
     const lineChanges = diffEditor.getLineChanges() ?? [];
     const preparedHunks = getPreparedHunks(diffEditor, originalModel, modifiedModel);
     const originalLineCount = getLineCount(nextSelectedFile.originalContent);
-    const modifiedLineCount = getLineCount(nextSelectedFile.modifiedContent);
+    const modifiedLineCount = getLineCount(
+      modifiedDraftsRef.current[nextSelectedFile.path]?.content ?? nextSelectedFile.modifiedContent,
+    );
     const originalDecorations: editor.IModelDeltaDecoration[] = [];
     const modifiedDecorations: editor.IModelDeltaDecoration[] = [];
     const nextDiffPoints: DiffPoint[] = [];
@@ -667,8 +763,12 @@ export function DiffViewerPane({
         throw reason;
       }
 
-      if (onSessionDiffFilesReverted) {
-        await onSessionDiffFilesReverted({
+      setModifiedDraftsByPath((currentDrafts) =>
+        markEditableDraftSaved(currentDrafts, selected.path, nextContent),
+      );
+
+      if (onSessionDiffFilesChanged) {
+        await onSessionDiffFilesChanged({
           paths: [selected.absPath],
           sessionId: result.sessionId,
         });
@@ -676,6 +776,56 @@ export function DiffViewerPane({
 
       setFeedback({
         text: "Hunk reverted, saved to disk, and refreshed.",
+        tone: "info",
+      });
+    } catch (reason) {
+      setFeedback({
+        text: reason instanceof Error ? reason.message : String(reason),
+        tone: "error",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSaveSelectedFile() {
+    const selected = selectedFileRef.current;
+    if (!selected || selected.modifiedContent === null) {
+      return;
+    }
+
+    const currentDraft = modifiedDraftsRef.current[selected.path];
+    if (!currentDraft || currentDraft.content === currentDraft.baseContent) {
+      setFeedback({
+        text: "No unsaved edits in Target.",
+        tone: "info",
+      });
+      return;
+    }
+
+    setBusyAction("save");
+    setFeedback(null);
+
+    try {
+      await invoke("write_file", {
+        content: currentDraft.content,
+        filePath: selected.absPath,
+        rootPath: result.rootPath,
+      });
+
+      setModifiedDraftsByPath((currentDrafts) =>
+        markEditableDraftSaved(currentDrafts, selected.path, currentDraft.content),
+      );
+
+      if (onSessionDiffFilesChanged) {
+        await onSessionDiffFilesChanged({
+          paths: [selected.absPath],
+          sessionId: result.sessionId,
+        });
+      }
+
+      setFeedback({
+        text: "Target saved to disk and refreshed.",
         tone: "info",
       });
     } catch (reason) {
@@ -723,8 +873,8 @@ export function DiffViewerPane({
         await revertWholeFile(file, result.rootPath);
       }
 
-      if (onSessionDiffFilesReverted) {
-        await onSessionDiffFilesReverted({
+      if (onSessionDiffFilesChanged) {
+        await onSessionDiffFilesChanged({
           paths: revertableFiles.map((file) => file.absPath),
           sessionId: result.sessionId,
         });
@@ -750,13 +900,16 @@ export function DiffViewerPane({
   return (
     <section className="diff-viewer">
       <header className="diff-viewer__header">
-        <div className="diff-viewer__file-strip">
+        <div
+          className="diff-viewer__file-strip"
+          onScroll={(event) => {
+            diffFileListScrollLeftBySessionId.set(result.sessionId, event.currentTarget.scrollLeft);
+          }}
+          onWheel={handleFileStripWheel}
+          ref={fileStripRef}
+        >
           <div
             className="diff-viewer__file-list"
-            onScroll={(event) => {
-              diffFileListScrollLeftBySessionId.set(result.sessionId, event.currentTarget.scrollLeft);
-            }}
-            ref={fileListRef}
           >
             {result.files.map((file) => {
               const fileName = getDisplayFileName(file.path);
@@ -821,6 +974,16 @@ export function DiffViewerPane({
                       </span>
                       <div className="diff-viewer__nav-actions">
                         <button
+                          className="diff-viewer__revert-button diff-viewer__revert-button--ghost"
+                          disabled={!canSaveSelectedFile}
+                          onClick={() => void handleSaveSelectedFile()}
+                          title={selectedFileSaveTitle}
+                          type="button"
+                        >
+                          {busyAction === "save" ? <LoaderCircle size={13} /> : <Save size={13} />}
+                          <span>Save</span>
+                        </button>
+                        <button
                           className="diff-viewer__revert-button"
                           disabled={!canRevertSelectedFile || isBusy}
                           onClick={() => void handleRevertSelectedFile()}
@@ -845,6 +1008,9 @@ export function DiffViewerPane({
                     <span className="diff-viewer__detail-status" data-status={selectedFile.status}>
                       {formatStatusLabel(selectedFile.status)}
                     </span>
+                    {isSelectedFileDirty ? (
+                      <span className="diff-viewer__detail-draft">Target edited</span>
+                    ) : null}
                   </div>
                 </header>
 
@@ -890,7 +1056,7 @@ export function DiffViewerPane({
                         className="diff-viewer__monaco"
                         height="100%"
                         key={`${selectedFile.path}:${result.generatedAt}:${editorEpoch}`}
-                        modified={selectedFile.modifiedContent ?? ""}
+                        modified={selectedModifiedContent}
                         modifiedLanguage={selectedFileLanguage}
                         modifiedModelPath={`${selectedFile.absPath}#modified`}
                         onMount={handleDiffEditorMount}
@@ -1378,5 +1544,112 @@ function createCharacterDecoration(
       className: kind === "insert" ? "char-insert" : "char-delete",
     },
     range: new monaco.Range(startLineNumber, startColumn, endLineNumber, endColumn),
+  };
+}
+
+function syncEditableDrafts(
+  currentDrafts: Record<string, EditableDraft>,
+  files: SessionDiffFile[],
+) {
+  let nextDrafts = currentDrafts;
+  const seenPaths = new Set<string>();
+
+  for (const file of files) {
+    seenPaths.add(file.path);
+
+    if (file.modifiedContent === null) {
+      if (file.path in nextDrafts) {
+        if (nextDrafts === currentDrafts) {
+          nextDrafts = { ...currentDrafts };
+        }
+        delete nextDrafts[file.path];
+      }
+      continue;
+    }
+
+    const currentDraft = nextDrafts[file.path];
+    if (!currentDraft) {
+      if (nextDrafts === currentDrafts) {
+        nextDrafts = { ...currentDrafts };
+      }
+      nextDrafts[file.path] = {
+        baseContent: file.modifiedContent,
+        content: file.modifiedContent,
+      };
+      continue;
+    }
+
+    if (currentDraft.baseContent === file.modifiedContent) {
+      continue;
+    }
+
+    if (nextDrafts === currentDrafts) {
+      nextDrafts = { ...currentDrafts };
+    }
+    nextDrafts[file.path] =
+      currentDraft.content === currentDraft.baseContent
+        ? {
+            baseContent: file.modifiedContent,
+            content: file.modifiedContent,
+          }
+        : {
+            ...currentDraft,
+            baseContent: file.modifiedContent,
+          };
+  }
+
+  for (const path of Object.keys(nextDrafts)) {
+    if (seenPaths.has(path)) {
+      continue;
+    }
+
+    if (nextDrafts === currentDrafts) {
+      nextDrafts = { ...currentDrafts };
+    }
+    delete nextDrafts[path];
+  }
+
+  return nextDrafts;
+}
+
+function updateEditableDraft(
+  currentDrafts: Record<string, EditableDraft>,
+  path: string,
+  content: string,
+) {
+  const currentDraft = currentDrafts[path];
+  if (!currentDraft || currentDraft.content === content) {
+    return currentDrafts;
+  }
+
+  return {
+    ...currentDrafts,
+    [path]: {
+      ...currentDraft,
+      content,
+    },
+  };
+}
+
+function markEditableDraftSaved(
+  currentDrafts: Record<string, EditableDraft>,
+  path: string,
+  content: string,
+) {
+  const currentDraft = currentDrafts[path];
+  if (!currentDraft) {
+    return currentDrafts;
+  }
+
+  if (currentDraft.baseContent === content && currentDraft.content === content) {
+    return currentDrafts;
+  }
+
+  return {
+    ...currentDrafts,
+    [path]: {
+      baseContent: content,
+      content,
+    },
   };
 }

@@ -1,14 +1,114 @@
 import "@xterm/xterm/css/xterm.css";
-import { SquareTerminal, Trash2, X } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import {
   useEffect,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { useViewportConstrainedMenuPosition } from "../../utils/contextMenu";
 import { useTerminal } from "./useTerminal";
 
+interface InlineTerminalTab {
+  id: string;
+  title: string;
+}
+
 interface InlineCmdTerminalProps {
+  activeTabId: string | null;
+  launchDir: string | null;
+  onAddTab: () => void;
+  onCloseTab: (tabId: string) => void;
+  onInsertSelectionToMainTerminal?: (text: string) => void;
+  onSelectTab: (tabId: string) => void;
+  onSessionComplete?: () => void;
+  tabs: InlineTerminalTab[];
+  workingDir: string | null;
+}
+
+export function InlineCmdTerminal({
+  activeTabId,
+  launchDir,
+  onAddTab,
+  onCloseTab,
+  onInsertSelectionToMainTerminal,
+  onSelectTab,
+  onSessionComplete,
+  tabs,
+  workingDir,
+}: InlineCmdTerminalProps) {
+  const resolvedActiveTabId = tabs.some((tab) => tab.id === activeTabId)
+    ? activeTabId
+    : tabs[0]?.id ?? null;
+
+  return (
+    <section className="inline-terminal">
+      <header className="inline-terminal__header">
+        <div aria-label="Inline terminal tabs" className="inline-terminal__tabs" role="tablist">
+          {tabs.map((tab) => {
+            const isActive = tab.id === resolvedActiveTabId;
+            return (
+              <button
+                aria-selected={isActive}
+                className="inline-terminal__tab"
+                data-active={isActive}
+                key={tab.id}
+                onClick={() => onSelectTab(tab.id)}
+                onMouseDown={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault();
+                    onCloseTab(tab.id);
+                  }
+                }}
+                onAuxClick={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault();
+                  }
+                }}
+                role="tab"
+                title={tab.title}
+                type="button"
+              >
+                {tab.title}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="inline-terminal__header-side">
+          <span className="inline-terminal__header-path" title={launchDir ?? workingDir ?? ""}>
+            {launchDir ?? workingDir ?? "No workspace selected"}
+          </span>
+          <button
+            className="terminal__icon-button"
+            onClick={onAddTab}
+            title="New terminal"
+            type="button"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+      </header>
+
+      <div className="inline-terminal__stack">
+        {tabs.map((tab) => (
+          <InlineCmdTerminalSession
+            isActive={tab.id === resolvedActiveTabId}
+            key={tab.id}
+            launchDir={launchDir}
+            onClose={() => onCloseTab(tab.id)}
+            onInsertSelectionToMainTerminal={onInsertSelectionToMainTerminal}
+            onSessionComplete={onSessionComplete}
+            workingDir={workingDir}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface InlineCmdTerminalSessionProps {
+  isActive: boolean;
   launchDir: string | null;
   onClose: () => void;
   onInsertSelectionToMainTerminal?: (text: string) => void;
@@ -16,13 +116,14 @@ interface InlineCmdTerminalProps {
   workingDir: string | null;
 }
 
-export function InlineCmdTerminal({
+function InlineCmdTerminalSession({
+  isActive,
   launchDir,
   onClose,
   onInsertSelectionToMainTerminal,
   onSessionComplete,
   workingDir,
-}: InlineCmdTerminalProps) {
+}: InlineCmdTerminalSessionProps) {
   const autoOpenKeyRef = useRef<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const [contextMenu, setContextMenu] = useState<{
@@ -30,6 +131,7 @@ export function InlineCmdTerminal({
     x: number;
     y: number;
   } | null>(null);
+  const contextMenuStyle = useViewportConstrainedMenuPosition(contextMenu, contextMenuRef);
   const terminal = useTerminal({
     launchDir,
     ownsSessionDiffLifecycle: false,
@@ -79,6 +181,14 @@ export function InlineCmdTerminal({
     };
   }, []);
 
+  useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+
+    terminal.focusTerminal();
+  }, [isActive, terminal.focusTerminal]);
+
   function handleViewportContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -92,15 +202,9 @@ export function InlineCmdTerminal({
   const trimmedSelection = contextMenu?.selectionText.trim() ?? "";
 
   return (
-    <section className="inline-terminal">
-      <header className="inline-terminal__header">
-        <div className="inline-terminal__title">
-          <SquareTerminal size={14} />
-          <span>CMD</span>
-          <span className="inline-terminal__path" title={launchDir ?? workingDir ?? ""}>
-            {launchDir ?? workingDir ?? "No workspace selected"}
-          </span>
-        </div>
+    <div className="inline-terminal__session" data-active={isActive}>
+      <div className="inline-terminal__session-bar">
+        <span className="inline-terminal__session-copy">Shell</span>
 
         <div className="inline-terminal__actions">
           <button
@@ -121,7 +225,7 @@ export function InlineCmdTerminal({
             <X size={14} />
           </button>
         </div>
-      </header>
+      </div>
 
       <div className="inline-terminal__body">
         <div
@@ -136,7 +240,7 @@ export function InlineCmdTerminal({
             className="context-menu"
             onClick={(event) => event.stopPropagation()}
             ref={contextMenuRef}
-            style={{ left: contextMenu.x, top: contextMenu.y }}
+            style={contextMenuStyle}
           >
             <button
               className="context-menu__button"
@@ -175,6 +279,6 @@ export function InlineCmdTerminal({
       </div>
 
       {terminal.error ? <div className="terminal__error">{terminal.error}</div> : null}
-    </section>
+    </div>
   );
 }

@@ -5,6 +5,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   ChevronDown,
   FolderOpen,
+  GitBranch,
   GitCompareArrows,
   Maximize2,
   Minimize2,
@@ -29,20 +30,30 @@ import { useEditor } from "./components/Editor/useEditor";
 import appIcon from "./assets/vibe-cli-editor-logo.svg";
 import { FileTree } from "./components/FileTree/FileTree";
 import { useFileTree } from "./components/FileTree/useFileTree";
+import { GitPanel } from "./components/GitPanel/GitPanel";
+import { useGitPanel } from "./components/GitPanel/useGitPanel";
 import { StatusBar } from "./components/StatusBar/StatusBar";
 import { InlineCmdTerminal } from "./components/TerminalPane/InlineCmdTerminal";
 import { TerminalPane } from "./components/TerminalPane/TerminalPane";
 import { useTerminal } from "./components/TerminalPane/useTerminal";
-import { WorkspaceFileSearch } from "./components/WorkspaceSearch/WorkspaceFileSearch";
+import {
+  WorkspaceFileSearch,
+  type WorkspaceSearchShortcutRequest,
+} from "./components/WorkspaceSearch/WorkspaceFileSearch";
 import type {
   AgentProvider,
+  EditorNavigationRequest,
   EditorTab,
   FileNode,
   FileSearchResult,
+  GitChangeEntry,
+  GitDiffResult,
+  GitDiffTab,
   SessionDiffFile,
   SessionDiffResult,
   SessionDiffTab,
   ShellKind,
+  TextSearchResult,
   WorkbenchTab,
 } from "./types";
 import { resolveProjectRelativePath } from "./utils/paths";
@@ -53,6 +64,17 @@ const APP_WINDOW_TITLE = "VibeCliEditor";
 const RECENT_FOLDERS_STORAGE_KEY = "vibeCliEditor.recentFolders";
 const LEGACY_RECENT_FOLDERS_STORAGE_KEY = "jterminal.recentFolders";
 const MAX_RECENT_FOLDERS = 8;
+const CURRENT_WINDOW_LABEL = appWindow.label;
+const INITIAL_RECENT_FOLDERS = loadRecentFolders();
+const INITIAL_WORKSPACE_PATH = getInitialWorkspacePath(INITIAL_RECENT_FOLDERS);
+const INITIAL_LAUNCH_PROVIDER = getInitialLaunchProvider();
+const SHOULD_REPLACE_BOOTSTRAP_WINDOW =
+  CURRENT_WINDOW_LABEL === "main" &&
+  INITIAL_WORKSPACE_PATH !== null &&
+  getWorkspacePathFromLocation() === null;
+let hasTriggeredBootstrapWindowReplacement = false;
+
+syncWindowTitle(buildWindowTitle(null, getWorkspaceName(INITIAL_WORKSPACE_PATH)));
 
 interface FileTreeInputDialogState {
   initialValue: string;
@@ -60,16 +82,24 @@ interface FileTreeInputDialogState {
   submitLabel: string;
 }
 
+interface InlineTerminalTabState {
+  id: string;
+  title: string;
+}
+
+interface WorkspaceShortcutRequest extends WorkspaceSearchShortcutRequest {}
+
 function App() {
-  const [recentFolders, setRecentFolders] = useState<string[]>(() => loadRecentFolders());
-  const [rootPath, setRootPath] = useState<string | null>(() =>
-    getInitialWorkspacePath(recentFolders),
-  );
+  const [recentFolders, setRecentFolders] = useState<string[]>(() => INITIAL_RECENT_FOLDERS);
+  const [rootPath, setRootPath] = useState<string | null>(() => INITIAL_WORKSPACE_PATH);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
-  const [isInlineTerminalVisible, setIsInlineTerminalVisible] = useState(false);
+  const [inlineTerminalTabs, setInlineTerminalTabs] = useState<InlineTerminalTabState[]>([]);
+  const [activeInlineTerminalTabId, setActiveInlineTerminalTabId] = useState<string | null>(null);
   const [isComposerEnabled, setIsComposerEnabled] = useState(true);
+  const [editorNavigationRequest, setEditorNavigationRequest] =
+    useState<EditorNavigationRequest | null>(null);
   const [mainTerminalComposerInsertRequest, setMainTerminalComposerInsertRequest] = useState<{
     sequence: number;
     text: string;
@@ -77,16 +107,26 @@ function App() {
     sequence: 0,
     text: "",
   });
+  const editorNavigationSequenceRef = useRef(0);
+  const workspaceSearchShortcutSequenceRef = useRef(0);
   const [fileTreeInputDialog, setFileTreeInputDialog] = useState<FileTreeInputDialogState | null>(
     null,
   );
-  const [pendingAgentLaunchProvider, setPendingAgentLaunchProvider] = useState<AgentProvider | null>(
-    null,
-  );
+  const [workspaceSearchShortcutRequest, setWorkspaceSearchShortcutRequest] =
+    useState<WorkspaceShortcutRequest | null>(null);
+  const [pendingAgentLaunchProvider, setPendingAgentLaunchProvider] =
+    useState<AgentProvider | null>(() => INITIAL_LAUNCH_PROVIDER);
+  const [leftSidebarView, setLeftSidebarView] = useState<"explorer" | "git">("explorer");
+  const [gitDiffTab, setGitDiffTab] = useState<GitDiffTab | null>(null);
+  const [isGitDiffTabActive, setIsGitDiffTabActive] = useState(false);
   const [sessionDiffTab, setSessionDiffTab] = useState<SessionDiffTab | null>(null);
   const [isSessionDiffTabActive, setIsSessionDiffTabActive] = useState(false);
+  const [isGitDiffInlineDirty, setIsGitDiffInlineDirty] = useState(false);
+  const [isSessionDiffInlineDirty, setIsSessionDiffInlineDirty] = useState(false);
   const shellKind: ShellKind = "cmd";
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
+  const inlineTerminalTabSequenceRef = useRef(0);
+  const inlineTerminalTabsRef = useRef<InlineTerminalTabState[]>([]);
   const titlebarPointerPressedRef = useRef(false);
   const lastAutoRefreshAtRef = useRef(0);
   const fileTreeInputDialogResolverRef = useRef<((value: string | null) => void) | null>(null);
@@ -94,10 +134,14 @@ function App() {
   const editor = useEditor({
     rootPath,
   });
+  const gitPanel = useGitPanel({
+    rootPath,
+  });
   const refreshWorkspace = useCallback(() => {
     setRefreshToken((value) => value + 1);
     void editor.reloadCleanTabsFromDisk();
-  }, [editor.reloadCleanTabsFromDisk]);
+    void gitPanel.refresh();
+  }, [editor.reloadCleanTabsFromDisk, gitPanel.refresh]);
 
   const currentWorkspaceName = useMemo(() => getWorkspaceName(rootPath), [rootPath]);
   const currentWorkspaceInitials = useMemo(
@@ -118,9 +162,11 @@ function App() {
     () => recentFolders.filter((path) => path !== rootPath),
     [recentFolders, rootPath],
   );
+  const isInlineTerminalVisible = inlineTerminalTabs.length > 0;
   const openEditorFile = useCallback(
     async (node: FileNode) => {
       setIsSessionDiffTabActive(false);
+      setIsGitDiffTabActive(false);
       await editor.openFile(node);
     },
     [editor],
@@ -131,6 +177,14 @@ function App() {
       currentRootPath === resolvedRootPath ? currentRootPath : resolvedRootPath,
     );
   }, []);
+
+  useEffect(() => {
+    setEditorNavigationRequest(null);
+  }, [rootPath]);
+
+  useEffect(() => {
+    inlineTerminalTabsRef.current = inlineTerminalTabs;
+  }, [inlineTerminalTabs]);
 
   const fileTree = useFileTree({
     onDeletePaths: (paths) => {
@@ -192,14 +246,90 @@ function App() {
     },
     [terminal],
   );
+  const refreshGitDiffTab = useCallback(
+    async (absPath: string) => {
+      const refreshedResult = await gitPanel.openDiff(absPath);
+      if (!refreshedResult) {
+        return;
+      }
+
+      setGitDiffTab(createGitDiffTab(refreshedResult));
+    },
+    [gitPanel.openDiff],
+  );
   const workbenchTabs = useMemo<WorkbenchTab[]>(
-    () => (sessionDiffTab ? [...editor.tabs, sessionDiffTab] : editor.tabs),
-    [editor.tabs, sessionDiffTab],
+    () => [
+      ...editor.tabs,
+      ...(gitDiffTab ? [gitDiffTab] : []),
+      ...(sessionDiffTab ? [sessionDiffTab] : []),
+    ],
+    [editor.tabs, gitDiffTab, sessionDiffTab],
   );
   const activeWorkbenchTab = useMemo<WorkbenchTab | null>(
-    () => (isSessionDiffTabActive ? sessionDiffTab : editor.activeTab),
-    [editor.activeTab, isSessionDiffTabActive, sessionDiffTab],
+    () =>
+      isSessionDiffTabActive
+        ? sessionDiffTab
+        : isGitDiffTabActive
+          ? gitDiffTab
+          : editor.activeTab,
+    [editor.activeTab, gitDiffTab, isGitDiffTabActive, isSessionDiffTabActive, sessionDiffTab],
   );
+  const activeLineJumpTab = useMemo<EditorTab | null>(
+    () =>
+      !isSessionDiffTabActive &&
+      !isGitDiffTabActive &&
+      editor.activeTab &&
+      editor.activeTab.contentKind !== "image"
+        ? editor.activeTab
+        : null,
+    [editor.activeTab, isGitDiffTabActive, isSessionDiffTabActive],
+  );
+  const requestWorkspaceShortcut = useCallback(
+    (request: Omit<WorkspaceShortcutRequest, "sequence">) => {
+      workspaceSearchShortcutSequenceRef.current += 1;
+      setWorkspaceSearchShortcutRequest({
+        sequence: workspaceSearchShortcutSequenceRef.current,
+        ...request,
+      });
+    },
+    [],
+  );
+  const handleOpenWorkspaceFileSearchShortcut = useCallback(() => {
+    if (!rootPath) {
+      return;
+    }
+
+    requestWorkspaceShortcut({
+      mode: "files",
+      query: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+    });
+  }, [requestWorkspaceShortcut, rootPath]);
+  const handleOpenWorkspaceTextSearchShortcut = useCallback(() => {
+    if (!rootPath) {
+      return;
+    }
+
+    requestWorkspaceShortcut({
+      mode: "text",
+      query: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+    });
+  }, [requestWorkspaceShortcut, rootPath]);
+  const handleOpenLineJumpShortcut = useCallback(() => {
+    if (!activeLineJumpTab) {
+      return;
+    }
+
+    requestWorkspaceShortcut({
+      mode: "files",
+      query: ":",
+      selectionStart: 1,
+      selectionEnd: 1,
+    });
+  }, [activeLineJumpTab, requestWorkspaceShortcut]);
   const windowTitle = useMemo(
     () => buildWindowTitle(activeWorkbenchTab?.name, currentWorkspaceName),
     [activeWorkbenchTab?.name, currentWorkspaceName],
@@ -210,7 +340,24 @@ function App() {
         return;
       }
 
+      if (isSessionDiffInlineDirty) {
+        return;
+      }
+
       await refreshSessionDiffTab(sessionDiffTab.result.sessionId);
+      return;
+    }
+
+    if (isGitDiffTabActive) {
+      if (!gitDiffTab) {
+        return;
+      }
+
+      if (isGitDiffInlineDirty) {
+        return;
+      }
+
+      await refreshGitDiffTab(gitDiffTab.result.absPath);
       return;
     }
 
@@ -224,8 +371,13 @@ function App() {
     });
   }, [
     editor.activeTab,
+    gitDiffTab,
+    isGitDiffInlineDirty,
+    isGitDiffTabActive,
     editor.reloadActiveTabFromDisk,
+    isSessionDiffInlineDirty,
     isSessionDiffTabActive,
+    refreshGitDiffTab,
     refreshSessionDiffTab,
     sessionDiffTab,
   ]);
@@ -238,7 +390,8 @@ function App() {
 
     lastAutoRefreshAtRef.current = now;
     void refreshActiveWorkbenchTab();
-  }, [refreshActiveWorkbenchTab]);
+    void gitPanel.refresh();
+  }, [gitPanel.refresh, refreshActiveWorkbenchTab]);
 
   useEffect(() => {
     let disposed = false;
@@ -311,15 +464,14 @@ function App() {
   ]);
 
   useEffect(() => {
-    document.title = windowTitle;
-    void appWindow.setTitle(windowTitle).catch((error) => {
-      console.error("[window] Failed to sync window title.", error);
-    });
+    syncWindowTitle(windowTitle);
   }, [windowTitle]);
 
   useEffect(() => {
     setSessionDiffTab(null);
     setIsSessionDiffTabActive(false);
+    setGitDiffTab(null);
+    setIsGitDiffTabActive(false);
   }, [rootPath]);
 
   useEffect(() => {
@@ -335,6 +487,20 @@ function App() {
       setIsSessionDiffTabActive(false);
     }
   }, [sessionDiffTab, terminal.sessions]);
+
+  useEffect(() => {
+    if (!gitDiffTab) {
+      return;
+    }
+
+    const hasMatchingGitEntry = gitPanel.entries.some(
+      (entry) => entry.absPath === gitDiffTab.result.absPath,
+    );
+    if (!hasMatchingGitEntry) {
+      setGitDiffTab(null);
+      setIsGitDiffTabActive(false);
+    }
+  }, [gitDiffTab, gitPanel.entries]);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -397,14 +563,64 @@ function App() {
     });
   }, []);
 
-  const openWorkspaceInCurrentWindow = useCallback(
-    (nextRootPath: string) => {
+  const openWorkspaceInReplacementWindow = useCallback(
+    (nextRootPath: string, launchProvider: AgentProvider | null = null) => {
       rememberRecentFolder(nextRootPath);
-      setRootPath(nextRootPath);
-      setIsInlineTerminalVisible(false);
       setIsWorkspaceMenuOpen(false);
+
+      try {
+        const replacementWindow = new WebviewWindow(createWorkspaceWindowLabel(), {
+          decorations: false,
+          height: 920,
+          minHeight: 680,
+          minWidth: 1080,
+          theme: "dark",
+          title: buildWindowTitle(null, getWorkspaceName(nextRootPath)),
+          url: createWorkspaceWindowUrl(nextRootPath, launchProvider),
+          width: 1440,
+        });
+
+        void replacementWindow.once("tauri://created", () => {
+          void appWindow.close().catch((error) => {
+            console.error("[window] Failed to close bootstrap workspace window.", error);
+          });
+        });
+        void replacementWindow.once("tauri://error", (error) => {
+          console.error("[workspace] Failed to create replacement workspace window.", error);
+        });
+      } catch (error) {
+        console.error("[workspace] Failed to open replacement workspace window.", error);
+      }
     },
     [rememberRecentFolder],
+  );
+
+  useEffect(() => {
+    if (!SHOULD_REPLACE_BOOTSTRAP_WINDOW || hasTriggeredBootstrapWindowReplacement) {
+      return;
+    }
+
+    hasTriggeredBootstrapWindowReplacement = true;
+    openWorkspaceInReplacementWindow(INITIAL_WORKSPACE_PATH, INITIAL_LAUNCH_PROVIDER);
+  }, [openWorkspaceInReplacementWindow]);
+
+  const openWorkspaceInCurrentWindow = useCallback(
+    (nextRootPath: string) => {
+      if (CURRENT_WINDOW_LABEL === "main" && !rootPath) {
+        openWorkspaceInReplacementWindow(nextRootPath);
+        return;
+      }
+
+      rememberRecentFolder(nextRootPath);
+      syncWindowTitle(buildWindowTitle(null, getWorkspaceName(nextRootPath)));
+      setRootPath(nextRootPath);
+      inlineTerminalTabSequenceRef.current = 0;
+      inlineTerminalTabsRef.current = [];
+      setInlineTerminalTabs([]);
+      setActiveInlineTerminalTabId(null);
+      setIsWorkspaceMenuOpen(false);
+    },
+    [openWorkspaceInReplacementWindow, rememberRecentFolder, rootPath],
   );
 
   const openWorkspaceInNewWindow = useCallback(
@@ -430,9 +646,47 @@ function App() {
     [rememberRecentFolder],
   );
 
+  const createInlineTerminalTab = useCallback((): InlineTerminalTabState => {
+    inlineTerminalTabSequenceRef.current += 1;
+    const sequence = inlineTerminalTabSequenceRef.current;
+    return {
+      id: `inline-terminal-${sequence}`,
+      title: `CMD ${sequence}`,
+    };
+  }, []);
+
   const openInlineTerminal = useCallback(() => {
-    setIsInlineTerminalVisible(true);
+    const nextTab = createInlineTerminalTab();
+    const nextTabs = [...inlineTerminalTabsRef.current, nextTab];
+    inlineTerminalTabsRef.current = nextTabs;
+    setInlineTerminalTabs(nextTabs);
+    setActiveInlineTerminalTabId(nextTab.id);
     setIsWorkspaceMenuOpen(false);
+  }, [createInlineTerminalTab]);
+
+  const closeInlineTerminalTab = useCallback((tabId: string) => {
+    const currentTabs = inlineTerminalTabsRef.current;
+    const tabIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+    if (tabIndex === -1) {
+      return;
+    }
+
+    const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
+    const fallbackTab =
+      nextTabs[tabIndex] ??
+      nextTabs[tabIndex - 1] ??
+      nextTabs[nextTabs.length - 1] ??
+      null;
+
+    inlineTerminalTabsRef.current = nextTabs;
+    setInlineTerminalTabs(nextTabs);
+    setActiveInlineTerminalTabId((currentActiveTabId) => {
+      if (currentActiveTabId !== tabId && nextTabs.some((tab) => tab.id === currentActiveTabId)) {
+        return currentActiveTabId;
+      }
+
+      return fallbackTab?.id ?? null;
+    });
   }, []);
 
   const pickWorkspaceDirectory = useCallback(async () => {
@@ -469,6 +723,11 @@ function App() {
           return;
         }
 
+        if (CURRENT_WINDOW_LABEL === "main") {
+          openWorkspaceInReplacementWindow(nextRootPath, provider);
+          return;
+        }
+
         setPendingAgentLaunchProvider(provider);
         openWorkspaceInCurrentWindow(nextRootPath);
         return;
@@ -487,6 +746,7 @@ function App() {
       terminal.launchClaude();
     },
     [
+      openWorkspaceInReplacementWindow,
       openWorkspaceInCurrentWindow,
       pickWorkspaceDirectory,
       rootPath,
@@ -502,6 +762,40 @@ function App() {
       openEditorFile(createFileNodeFromSearchResult(result)),
     ]);
   }
+
+  async function handleWorkspaceTextSearchOpen(result: TextSearchResult) {
+    await Promise.all([
+      fileTree.revealPath(result.absPath),
+      openEditorFile(createFileNodeFromSearchResult(result)),
+    ]);
+
+    editorNavigationSequenceRef.current += 1;
+    setEditorNavigationRequest({
+      id: editorNavigationSequenceRef.current,
+      absPath: result.absPath,
+      line: result.line,
+      column: result.column,
+      matchLength: result.matchLength,
+    });
+  }
+
+  const handleWorkspaceSearchLineJump = useCallback(
+    async ({ column = 1, line }: { line: number; column?: number }) => {
+      if (!activeLineJumpTab) {
+        return;
+      }
+
+      editorNavigationSequenceRef.current += 1;
+      setEditorNavigationRequest({
+        id: editorNavigationSequenceRef.current,
+        absPath: activeLineJumpTab.absPath,
+        line,
+        column,
+        matchLength: 1,
+      });
+    },
+    [activeLineJumpTab],
+  );
 
   async function handleLocateTerminalSelectionFile(selectionText: string) {
     if (!rootPath) {
@@ -631,6 +925,7 @@ function App() {
 
       setSessionDiffTab(createSessionDiffTab(result, sessionTitle));
       setIsSessionDiffTabActive(true);
+      setIsGitDiffTabActive(false);
     } catch (error) {
       console.error("[diff] Failed to load session diff.", error);
     }
@@ -656,6 +951,7 @@ function App() {
 
       const targets = result.files.map((file) => createSessionDiffOpenTarget(file));
       setIsSessionDiffTabActive(false);
+      setIsGitDiffTabActive(false);
 
       for (const target of targets) {
         if (target.type === "disk") {
@@ -678,53 +974,258 @@ function App() {
     }
   }, [editor, terminal]);
 
-  const handleSessionDiffFilesReverted = useCallback(
-    async ({ paths, sessionId }: { paths: string[]; sessionId: string }) => {
+  const handleInlineFilesChanged = useCallback(
+    async ({ paths, sessionId }: { paths: string[]; sessionId?: string }) => {
       setRefreshToken((value) => value + 1);
       await editor.reloadPathsFromDisk(paths, { closeMissing: true });
 
-      await refreshSessionDiffTab(sessionId);
+      await gitPanel.refresh();
+
+      const shouldRefreshSessionDiff = sessionId
+        ? sessionDiffTab?.result.sessionId === sessionId
+        : Boolean(
+            sessionDiffTab &&
+              paths.some((path) =>
+                sessionDiffTab.result.files.some((file) => file.absPath === path),
+              ),
+          );
+
+      if (shouldRefreshSessionDiff) {
+        const targetSessionId = sessionId ?? sessionDiffTab?.result.sessionId;
+        if (targetSessionId) {
+          await refreshSessionDiffTab(targetSessionId);
+        }
+      }
+
+      if (gitDiffTab && paths.includes(gitDiffTab.result.absPath)) {
+        try {
+          await refreshGitDiffTab(gitDiffTab.result.absPath);
+        } catch (error) {
+          console.error("[git] Failed to refresh Git diff tab after inline save.", error);
+        }
+      }
     },
-    [editor.reloadPathsFromDisk, refreshSessionDiffTab],
+    [
+      editor.reloadPathsFromDisk,
+      gitDiffTab,
+      gitPanel.refresh,
+      refreshGitDiffTab,
+      refreshSessionDiffTab,
+      sessionDiffTab,
+    ],
   );
 
-  function handleSelectWorkbenchTab(tabId: string) {
-    if (sessionDiffTab && tabId === sessionDiffTab.id) {
-      setIsSessionDiffTabActive(true);
-      void (async () => {
-        try {
-          await editor.saveDirtyTabs();
-          await refreshSessionDiffTab(sessionDiffTab.result.sessionId);
-        } catch (error) {
-          console.error("[diff] Failed to refresh session diff tab.", error);
+  const handleSelectWorkbenchTab = useCallback(
+    (tabId: string) => {
+      if (sessionDiffTab && tabId === sessionDiffTab.id) {
+        setIsGitDiffTabActive(false);
+        setIsSessionDiffTabActive(true);
+        if (isSessionDiffInlineDirty) {
+          return;
         }
-      })();
-      return;
-    }
+        void (async () => {
+          try {
+            await editor.saveDirtyTabs();
+            await refreshSessionDiffTab(sessionDiffTab.result.sessionId);
+          } catch (error) {
+            console.error("[diff] Failed to refresh session diff tab.", error);
+          }
+        })();
+        return;
+      }
 
-    setIsSessionDiffTabActive(false);
-    void editor.activateTab(tabId, { syncFromDisk: true });
-  }
+      if (gitDiffTab && tabId === gitDiffTab.id) {
+        setIsSessionDiffTabActive(false);
+        setIsGitDiffTabActive(true);
+        if (isGitDiffInlineDirty) {
+          return;
+        }
+        void (async () => {
+          try {
+            await editor.saveDirtyTabs();
+            await refreshGitDiffTab(gitDiffTab.result.absPath);
+          } catch (error) {
+            console.error("[git] Failed to refresh Git diff tab.", error);
+          }
+        })();
+        return;
+      }
 
-  function handleCloseWorkbenchTab(tabId: string) {
-    if (sessionDiffTab && tabId === sessionDiffTab.id) {
-      setSessionDiffTab(null);
       setIsSessionDiffTabActive(false);
+      setIsGitDiffTabActive(false);
+      void editor.activateTab(tabId, { syncFromDisk: true });
+    },
+    [
+      editor,
+      gitDiffTab,
+      isGitDiffInlineDirty,
+      isSessionDiffInlineDirty,
+      refreshGitDiffTab,
+      refreshSessionDiffTab,
+      sessionDiffTab,
+    ],
+  );
+
+  const handleCloseWorkbenchTab = useCallback(
+    (tabId: string) => {
+      if (sessionDiffTab && tabId === sessionDiffTab.id) {
+        setSessionDiffTab(null);
+        setIsSessionDiffTabActive(false);
+        return;
+      }
+
+      if (gitDiffTab && tabId === gitDiffTab.id) {
+        setGitDiffTab(null);
+        setIsGitDiffTabActive(false);
+        return;
+      }
+
+      editor.closeTab(tabId);
+    },
+    [editor, gitDiffTab, sessionDiffTab],
+  );
+  const handleCloseActiveWorkbenchTabShortcut = useCallback(() => {
+    if (!activeWorkbenchTab) {
       return;
     }
 
-    editor.closeTab(tabId);
-  }
+    handleCloseWorkbenchTab(getWorkbenchTabId(activeWorkbenchTab));
+  }, [activeWorkbenchTab, handleCloseWorkbenchTab]);
+  const handleCycleWorkbenchTabShortcut = useCallback(
+    (direction: -1 | 1) => {
+      if (workbenchTabs.length < 2) {
+        return;
+      }
+
+      const activeTabId = activeWorkbenchTab ? getWorkbenchTabId(activeWorkbenchTab) : null;
+      const activeIndex = activeTabId
+        ? workbenchTabs.findIndex((tab) => getWorkbenchTabId(tab) === activeTabId)
+        : -1;
+      const nextIndex =
+        activeIndex === -1
+          ? direction > 0
+            ? 0
+            : workbenchTabs.length - 1
+          : (activeIndex + direction + workbenchTabs.length) % workbenchTabs.length;
+      const nextTab = workbenchTabs[nextIndex];
+      if (!nextTab) {
+        return;
+      }
+
+      handleSelectWorkbenchTab(getWorkbenchTabId(nextTab));
+    },
+    [activeWorkbenchTab, handleSelectWorkbenchTab, workbenchTabs],
+  );
+
+  useEffect(() => {
+    function handleGlobalShortcutKeydown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+        return;
+      }
+
+      if (shouldIgnoreWorkbenchShortcutTarget(event.target)) {
+        return;
+      }
+
+      const normalizedKey = event.key.toLowerCase();
+
+      if (!event.shiftKey && normalizedKey === "l") {
+        if (!activeLineJumpTab) {
+          return;
+        }
+
+        event.preventDefault();
+        handleOpenLineJumpShortcut();
+        return;
+      }
+
+      if (event.shiftKey && normalizedKey === "r") {
+        if (!rootPath) {
+          return;
+        }
+
+        event.preventDefault();
+        handleOpenWorkspaceFileSearchShortcut();
+        return;
+      }
+
+      if (!event.shiftKey && normalizedKey === "h") {
+        if (!rootPath) {
+          return;
+        }
+
+        event.preventDefault();
+        handleOpenWorkspaceTextSearchShortcut();
+        return;
+      }
+
+      if (event.shiftKey && normalizedKey === "s") {
+        event.preventDefault();
+        void editor.saveDirtyTabs().catch((error) => {
+          console.error("[editor] Failed to save all dirty tabs.", error);
+        });
+        return;
+      }
+
+      if (!event.shiftKey && normalizedKey === "w") {
+        if (!activeWorkbenchTab) {
+          return;
+        }
+
+        event.preventDefault();
+        handleCloseActiveWorkbenchTabShortcut();
+        return;
+      }
+
+      if (!event.shiftKey && event.key === "PageDown") {
+        event.preventDefault();
+        handleCycleWorkbenchTabShortcut(1);
+        return;
+      }
+
+      if (!event.shiftKey && event.key === "PageUp") {
+        event.preventDefault();
+        handleCycleWorkbenchTabShortcut(-1);
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalShortcutKeydown);
+    return () => window.removeEventListener("keydown", handleGlobalShortcutKeydown);
+  }, [
+    activeLineJumpTab,
+    activeWorkbenchTab,
+    editor.saveDirtyTabs,
+    handleCloseActiveWorkbenchTabShortcut,
+    handleCycleWorkbenchTabShortcut,
+    handleOpenLineJumpShortcut,
+    handleOpenWorkspaceFileSearchShortcut,
+    handleOpenWorkspaceTextSearchShortcut,
+    rootPath,
+  ]);
 
   const editorPane = (
     <EditorPane
       activeTab={activeWorkbenchTab}
       error={editor.error}
+      navigationRequest={editorNavigationRequest}
       onCloseTab={handleCloseWorkbenchTab}
       onContentChange={editor.updateActiveContent}
       onCursorChange={editor.setCursorPosition}
       onFocusWithin={triggerAutoRefreshActiveEditorTab}
-      onSessionDiffFilesReverted={handleSessionDiffFilesReverted}
+      onGitDiffDirtyChange={setIsGitDiffInlineDirty}
+      onInlineFilesChanged={handleInlineFilesChanged}
+      onRequestCloseActiveTabShortcut={handleCloseActiveWorkbenchTabShortcut}
+      onRequestFileSearchShortcut={handleOpenWorkspaceFileSearchShortcut}
+      onRequestGotoLineShortcut={handleOpenLineJumpShortcut}
+      onRequestNextTabShortcut={() => handleCycleWorkbenchTabShortcut(1)}
+      onRequestPreviousTabShortcut={() => handleCycleWorkbenchTabShortcut(-1)}
+      onRequestSaveAllShortcut={() => {
+        void editor.saveDirtyTabs().catch((error) => {
+          console.error("[editor] Failed to save all dirty tabs.", error);
+        });
+      }}
+      onRequestTextSearchShortcut={handleOpenWorkspaceTextSearchShortcut}
+      onSessionDiffDirtyChange={setIsSessionDiffInlineDirty}
       onSelectTab={handleSelectWorkbenchTab}
       tabs={workbenchTabs}
     />
@@ -765,6 +1266,134 @@ function App() {
       });
     },
     [terminal],
+  );
+  const handleOpenGitDiff = useCallback(
+    async (absPath: string) => {
+      try {
+        await editor.saveDirtyTabs();
+        await gitPanel.refresh();
+        const result = await gitPanel.openDiff(absPath);
+        if (!result) {
+          return;
+        }
+
+        setGitDiffTab(createGitDiffTab(result));
+        setIsGitDiffTabActive(true);
+        setIsSessionDiffTabActive(false);
+      } catch (error) {
+        console.error("[git] Failed to open Git diff.", error);
+      }
+    },
+    [editor.saveDirtyTabs, gitPanel.openDiff, gitPanel.refresh],
+  );
+  const handleCommitGitSelection = useCallback(
+    async () => {
+      try {
+        await editor.saveDirtyTabs();
+        await gitPanel.refresh();
+        await gitPanel.commitSelected();
+      } catch (error) {
+        console.error("[git] Failed to commit selected changes.", error);
+      }
+    },
+    [editor.saveDirtyTabs, gitPanel.commitSelected, gitPanel.refresh],
+  );
+  const handlePushGitBranch = useCallback(
+    async () => {
+      try {
+        await gitPanel.pushBranch();
+      } catch (error) {
+        reportGitActionError("push branch", error, "Unable to push the current branch.");
+      }
+    },
+    [gitPanel.pushBranch],
+  );
+  const handleStageGitPaths = useCallback(
+    async (absPaths: string[]) => {
+      try {
+        await editor.saveDirtyTabs();
+        await gitPanel.stagePaths(absPaths);
+      } catch (error) {
+        reportGitActionError("stage files", error, "Unable to add the selected files to VCS.");
+      }
+    },
+    [editor.saveDirtyTabs, gitPanel.stagePaths],
+  );
+  const handleRollbackGitPaths = useCallback(
+    async (absPaths: string[]) => {
+      const targetLabel =
+        absPaths.length === 1 ? "this change" : `${absPaths.length} selected changes`;
+      if (!window.confirm(`Roll back ${targetLabel}? This will discard local edits on disk.`)) {
+        return;
+      }
+
+      try {
+        await editor.saveDirtyTabs();
+        await gitPanel.rollbackPaths(absPaths);
+        await editor.reloadCleanTabsFromDisk();
+      } catch (error) {
+        reportGitActionError("roll back files", error, "Unable to roll back the selected changes.");
+      }
+    },
+    [editor.reloadCleanTabsFromDisk, editor.saveDirtyTabs, gitPanel.rollbackPaths],
+  );
+  const handleIgnoreGitPaths = useCallback(
+    async (absPaths: string[]) => {
+      try {
+        await gitPanel.ignorePaths(absPaths);
+      } catch (error) {
+        reportGitActionError(
+          "update .gitignore",
+          error,
+          "Unable to add the selected files to .gitignore.",
+        );
+      }
+    },
+    [gitPanel.ignorePaths],
+  );
+  const handleDeleteGitPaths = useCallback(
+    async (absPaths: string[]) => {
+      const targetLabel =
+        absPaths.length === 1 ? `"${getBaseName(absPaths[0])}"` : `${absPaths.length} selected files`;
+      if (!window.confirm(`Delete ${targetLabel}? This will remove the file from disk.`)) {
+        return;
+      }
+
+      try {
+        await gitPanel.deletePaths(absPaths);
+        editor.removePaths(absPaths);
+        setRefreshToken((value) => value + 1);
+
+        if (gitDiffTab && absPaths.includes(gitDiffTab.result.absPath)) {
+          try {
+            await refreshGitDiffTab(gitDiffTab.result.absPath);
+          } catch {
+            setGitDiffTab(null);
+            setIsGitDiffTabActive(false);
+          }
+        }
+      } catch (error) {
+        reportGitActionError("delete files", error, "Unable to delete the selected files.");
+      }
+    },
+    [editor.removePaths, gitDiffTab, gitPanel.deletePaths, refreshGitDiffTab],
+  );
+  const handleJumpToGitSource = useCallback(
+    async (entry: GitChangeEntry) => {
+      if (entry.status === "deleted") {
+        return;
+      }
+
+      try {
+        await Promise.all([
+          fileTree.revealPath(entry.absPath),
+          openEditorFile(createFileNodeFromGitChangeEntry(entry)),
+        ]);
+      } catch (error) {
+        reportGitActionError("open the source file", error, "Unable to open the selected file.");
+      }
+    },
+    [fileTree, openEditorFile],
   );
 
   return (
@@ -812,10 +1441,26 @@ function App() {
               className="workspace-switcher__terminal-button"
               disabled={!rootPath}
               onClick={openInlineTerminal}
-              title="Open bottom terminal"
+              title={isInlineTerminalVisible ? "New bottom terminal" : "Open bottom terminal"}
               type="button"
             >
-              <SquareTerminal size={14} />
+              <SquareTerminal size={16} />
+            </button>
+
+            <button
+              aria-pressed={leftSidebarView === "git"}
+              className="workspace-switcher__git-button"
+              data-active={leftSidebarView === "git"}
+              disabled={!rootPath}
+              onClick={() =>
+                setLeftSidebarView((currentView) =>
+                  currentView === "git" ? "explorer" : "git",
+                )
+              }
+              title={leftSidebarView === "git" ? "Show Explorer" : "Show Git panel"}
+              type="button"
+            >
+              <GitBranch size={16} />
             </button>
 
             {isWorkspaceMenuOpen ? (
@@ -864,7 +1509,15 @@ function App() {
         </div>
 
         <div className="app-titlebar__drag-space">
-          <WorkspaceFileSearch onOpenResult={handleWorkspaceSearchOpen} rootPath={rootPath} />
+          <WorkspaceFileSearch
+            activeEditorRelPath={activeLineJumpTab?.relPath ?? null}
+            onJumpToActiveEditorLocation={handleWorkspaceSearchLineJump}
+            onOpenFileResult={handleWorkspaceSearchOpen}
+            onPreviewFileSaved={handleInlineFilesChanged}
+            onOpenTextResult={handleWorkspaceTextSearchOpen}
+            rootPath={rootPath}
+            shortcutRequest={workspaceSearchShortcutRequest}
+          />
         </div>
 
         <div className="app-titlebar__right">
@@ -975,35 +1628,98 @@ function App() {
       <div className="ide__main">
         <PanelGroup className="ide__panels" direction="horizontal">
           <Panel defaultSize={20} minSize={10}>
-            <FileTree
-              activeFilePath={editor.activeTab?.absPath ?? null}
-              canCreateInContextTarget={fileTree.canCreateInContextTarget}
-              canDeleteContextSelection={fileTree.canDeleteContextSelection}
-              canLocateActiveFile={Boolean(editor.activeTab)}
-              canPasteIntoContextTarget={fileTree.canPasteIntoContextTarget}
-              canRenameContextTarget={fileTree.canRenameContextTarget}
-              contextMenu={fileTree.contextMenu}
-              dirtyPaths={editor.dirtyPaths}
-              error={fileTree.error}
-              expandedPaths={fileTree.expandedPaths}
-              isLoading={fileTree.isLoading}
-              loadingPaths={fileTree.loadingPaths}
-              onContextCreateFile={fileTree.createContextFile}
-              onContextCreateFolder={fileTree.createContextFolder}
-              onContextDelete={fileTree.deleteContextSelection}
-              onContextOpenInFileManager={handleOpenInFileManager}
-              onContextPaste={fileTree.pasteIntoSelection}
-              onContextRename={fileTree.renameContextTarget}
-              onContextInsert={fileTree.insertContextSelection}
-              onLocateActiveFile={handleLocateActiveFile}
-              onNodeClick={fileTree.handleNodeClick}
-              onNodeContextMenu={fileTree.handleNodeContextMenu}
-              onOpenFolder={() => void handlePickDirectory("current")}
-              onRefresh={refreshWorkspace}
-              rootNode={fileTree.rootNode}
-              rootPath={rootPath}
-              selectedPaths={fileTree.selectedPaths}
-            />
+            <section className="sidebar-pane">
+              <div className="sidebar-pane__body">
+                {leftSidebarView === "explorer" ? (
+                  <FileTree
+                    activeFilePath={editor.activeTab?.absPath ?? null}
+                    canCreateInContextTarget={fileTree.canCreateInContextTarget}
+                    canCopyContextSelection={fileTree.canCopyContextSelection}
+                    canDeleteContextSelection={fileTree.canDeleteContextSelection}
+                    canDeleteSelection={fileTree.canDeleteSelection}
+                    canLocateActiveFile={Boolean(editor.activeTab)}
+                    canPasteIntoContextTarget={fileTree.canPasteIntoContextTarget}
+                    canRenameContextTarget={fileTree.canRenameContextTarget}
+                    contextMenu={fileTree.contextMenu}
+                    dirtyPaths={editor.dirtyPaths}
+                    error={fileTree.error}
+                    expandedPaths={fileTree.expandedPaths}
+                    isLoading={fileTree.isLoading}
+                    loadingPaths={fileTree.loadingPaths}
+                    onContextCreateFile={fileTree.createContextFile}
+                    onContextCreateFolder={fileTree.createContextFolder}
+                    onContextCopy={fileTree.copyContextSelection}
+                    onContextDelete={fileTree.deleteContextSelection}
+                    onDeleteSelection={fileTree.deleteSelection}
+                    onContextOpenInFileManager={handleOpenInFileManager}
+                    onContextPaste={fileTree.pasteIntoSelection}
+                    onContextRename={fileTree.renameContextTarget}
+                    onContextInsert={fileTree.insertContextSelection}
+                    onExplorerBackgroundClick={fileTree.handleExplorerBackgroundClick}
+                    onExplorerBackgroundContextMenu={fileTree.handleExplorerBackgroundContextMenu}
+                    onLocateActiveFile={handleLocateActiveFile}
+                    onNodeClick={fileTree.handleNodeClick}
+                    onNodeContextMenu={fileTree.handleNodeContextMenu}
+                    onOpenFolder={() => void handlePickDirectory("current")}
+                    onRefresh={refreshWorkspace}
+                    rootNode={fileTree.rootNode}
+                    rootPath={rootPath}
+                    selectedPaths={fileTree.selectedPaths}
+                  />
+                ) : (
+                  <GitPanel
+                    activePath={gitPanel.activePath}
+                    activeRepositoryRoot={gitPanel.activeRepositoryRoot}
+                    amend={gitPanel.amend}
+                    branch={gitPanel.branch}
+                    changes={gitPanel.changes}
+                    checkedPaths={gitPanel.checkedPaths}
+                    commitError={gitPanel.commitError}
+                    commitFeedback={gitPanel.commitFeedback}
+                    commitMessage={gitPanel.commitMessage}
+                    error={gitPanel.error}
+                    hasRepository={gitPanel.hasRepository}
+                    isCommitBusy={gitPanel.isCommitBusy}
+                    isLoading={gitPanel.isLoading}
+                    isPushBusy={gitPanel.isPushBusy}
+                    onActivatePath={(absPath) => {
+                      void handleOpenGitDiff(absPath);
+                    }}
+                    onAddToGitignore={(absPaths) => {
+                      void handleIgnoreGitPaths(absPaths);
+                    }}
+                    onCommit={() => {
+                      void handleCommitGitSelection();
+                    }}
+                    onDeletePaths={(absPaths) => {
+                      void handleDeleteGitPaths(absPaths);
+                    }}
+                    onJumpToSource={(entry) => {
+                      void handleJumpToGitSource(entry);
+                    }}
+                    onPush={() => {
+                      void handlePushGitBranch();
+                    }}
+                    onRefresh={() => {
+                      void gitPanel.refresh();
+                    }}
+                    onRollbackPaths={(absPaths) => {
+                      void handleRollbackGitPaths(absPaths);
+                    }}
+                    onSelectRepository={gitPanel.selectRepository}
+                    onSetAmend={gitPanel.setAmend}
+                    onSetCommitMessage={gitPanel.setCommitMessage}
+                    onSetGroupChecked={gitPanel.setGroupChecked}
+                    repositories={gitPanel.repositories}
+                    onStagePaths={(absPaths) => {
+                      void handleStageGitPaths(absPaths);
+                    }}
+                    onToggleCheckedPath={gitPanel.toggleCheckedPath}
+                    unversioned={gitPanel.unversioned}
+                  />
+                )}
+              </div>
+            </section>
           </Panel>
 
           <PanelResizeHandle className="resize-handle" />
@@ -1022,10 +1738,14 @@ function App() {
 
                       <Panel defaultSize={30} minSize={18}>
                         <InlineCmdTerminal
+                          activeTabId={activeInlineTerminalTabId}
                           launchDir={terminalLaunchDir}
-                          onClose={() => setIsInlineTerminalVisible(false)}
+                          onAddTab={openInlineTerminal}
+                          onCloseTab={closeInlineTerminalTab}
                           onInsertSelectionToMainTerminal={handleInsertIntoMainTerminal}
+                          onSelectTab={setActiveInlineTerminalTabId}
                           onSessionComplete={refreshWorkspace}
+                          tabs={inlineTerminalTabs}
                           workingDir={rootPath}
                         />
                       </Panel>
@@ -1073,7 +1793,7 @@ function App() {
       </div>
 
       <StatusBar
-        activeTab={editor.activeTab}
+        activeTab={activeWorkbenchTab}
         cursor={editor.cursor}
         rootPath={rootPath}
         shellKind={shellKind}
@@ -1101,12 +1821,42 @@ function isInteractiveTitlebarTarget(target: EventTarget | null) {
   return Boolean(target.closest("button, select, input, textarea, option, [data-no-drag='true']"));
 }
 
+function shouldIgnoreWorkbenchShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  if (target.closest(".workspace-search__input")) {
+    return false;
+  }
+
+  if (target.closest(".monaco-editor, .xterm, .terminal-composer__input, .input-dialog__field")) {
+    return true;
+  }
+
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+}
+
+function getWorkbenchTabId(tab: WorkbenchTab) {
+  return "tabType" in tab ? tab.id : tab.absPath;
+}
+
 async function runWindowAction(label: string, action: () => Promise<void>) {
   try {
     await action();
   } catch (error) {
     console.error(`[window] Failed to ${label}.`, error);
   }
+}
+
+function syncWindowTitle(title: string) {
+  if (typeof document !== "undefined") {
+    document.title = title;
+  }
+
+  void appWindow.setTitle(title).catch((error) => {
+    console.error("[window] Failed to sync window title.", error);
+  });
 }
 
 function loadRecentFolders() {
@@ -1170,7 +1920,11 @@ function getWorkspaceInitials(name: string) {
   return compactName.slice(0, 2) || "JT";
 }
 
-function createFileNodeFromSearchResult(result: FileSearchResult): FileNode {
+function createFileNodeFromSearchResult(result: {
+  absPath: string;
+  name: string;
+  relPath: string;
+}): FileNode {
   return {
     absPath: result.absPath,
     children: undefined,
@@ -1179,6 +1933,18 @@ function createFileNodeFromSearchResult(result: FileSearchResult): FileNode {
     isDir: false,
     name: result.name,
     relPath: result.relPath,
+  };
+}
+
+function createFileNodeFromGitChangeEntry(entry: GitChangeEntry): FileNode {
+  return {
+    absPath: entry.absPath,
+    children: undefined,
+    hasChildren: false,
+    id: entry.absPath,
+    isDir: false,
+    name: getBaseName(entry.path),
+    relPath: entry.path,
   };
 }
 
@@ -1240,6 +2006,23 @@ function resolveSessionDiffTabContent(file: SessionDiffFile) {
 function getBaseName(path: string) {
   const normalized = path.replace(/[/\\]+$/, "");
   return normalized.split(/[/\\]/).pop() || normalized;
+}
+
+function reportGitActionError(label: string, error: unknown, fallbackMessage: string) {
+  console.error(`[git] Failed to ${label}.`, error);
+  window.alert(resolveErrorMessage(error, fallbackMessage));
+}
+
+function resolveErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+
+  return fallbackMessage;
 }
 
 async function findFileSearchResultFromTerminalSelection(
@@ -1339,30 +2122,61 @@ function normalizeComparablePath(value: string) {
 }
 
 function getInitialWorkspacePath(recentFolders: string[]) {
+  const workspacePathFromUrl = getWorkspacePathFromLocation();
+  if (workspacePathFromUrl) {
+    return workspacePathFromUrl;
+  }
+
+  return recentFolders[0] ?? null;
+}
+
+function getWorkspacePathFromLocation() {
   if (typeof window === "undefined") {
     return null;
   }
 
   try {
     const url = new URL(window.location.href);
-    const workspacePath = url.searchParams.get("workspace");
-    if (workspacePath && workspacePath.trim().length > 0) {
-      return workspacePath;
-    }
+    return normalizeWorkspaceQueryValue(url.searchParams.get("workspace"));
   } catch {
-    return recentFolders[0] ?? null;
+    return null;
   }
-
-  return recentFolders[0] ?? null;
 }
 
-function createWorkspaceWindowUrl(workspacePath: string) {
+function getInitialLaunchProvider(): AgentProvider | null {
   if (typeof window === "undefined") {
-    return `/?workspace=${encodeURIComponent(workspacePath)}`;
+    return null;
+  }
+
+  try {
+    const url = new URL(window.location.href);
+    const provider = url.searchParams.get("launchProvider");
+    return provider === "codex" || provider === "claude" ? provider : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeWorkspaceQueryValue(value: string | null) {
+  return value && value.trim().length > 0 ? value : null;
+}
+
+function createWorkspaceWindowUrl(
+  workspacePath: string,
+  launchProvider: AgentProvider | null = null,
+) {
+  if (typeof window === "undefined") {
+    const providerQuery = launchProvider ? `&launchProvider=${encodeURIComponent(launchProvider)}` : "";
+    return `/?workspace=${encodeURIComponent(workspacePath)}${providerQuery}`;
   }
 
   const url = new URL(window.location.href);
   url.searchParams.set("workspace", workspacePath);
+  if (launchProvider) {
+    url.searchParams.set("launchProvider", launchProvider);
+  } else {
+    url.searchParams.delete("launchProvider");
+  }
   return url.toString();
 }
 
@@ -1429,4 +2243,18 @@ function createSessionDiffTab(result: SessionDiffResult, sessionTitle: string): 
 
 function createSessionDiffTabId(sessionId: string) {
   return `session-diff:${sessionId}`;
+}
+
+function createGitDiffTab(result: GitDiffResult): GitDiffTab {
+  return {
+    id: createGitDiffTabId(result.absPath),
+    name: getBaseName(result.path),
+    relPath: `Git Changes/${result.path}`,
+    result,
+    tabType: "gitDiff",
+  };
+}
+
+function createGitDiffTabId(absPath: string) {
+  return `git-diff:${absPath}`;
 }

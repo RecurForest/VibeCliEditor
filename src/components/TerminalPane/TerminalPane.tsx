@@ -2,6 +2,7 @@ import "@xterm/xterm/css/xterm.css";
 import { History, Plus, SquareTerminal, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type Ref } from "react";
 import type { TerminalSessionRecord } from "../../types";
+import { useViewportConstrainedMenuPosition } from "../../utils/contextMenu";
 import { TerminalComposer } from "./TerminalComposer";
 
 interface TerminalPaneProps {
@@ -67,6 +68,7 @@ export function TerminalPane({
   } | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuStyle = useViewportConstrainedMenuPosition(contextMenu, contextMenuRef);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -298,7 +300,7 @@ export function TerminalPane({
             className="context-menu"
             onClick={(event) => event.stopPropagation()}
             ref={contextMenuRef}
-            style={{ left: contextMenu.x, top: contextMenu.y }}
+            style={contextMenuStyle}
           >
             <button
               className="context-menu__button"

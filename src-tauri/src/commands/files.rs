@@ -8,6 +8,7 @@ use std::os::windows::process::CommandExt;
 
 use crate::models::file_node::FileNode;
 use crate::models::file_search_result::FileSearchResult;
+use crate::models::text_search_result::TextSearchResult;
 use crate::services::file_tree;
 use crate::services::file_tree::ClipboardPasteFile;
 use crate::services::paths::path_to_string;
@@ -120,6 +121,16 @@ pub fn cleanup_stale_composer_attachment_temp() -> Result<(), String> {
 pub fn search_files(root_path: String, query: String) -> Result<Vec<FileSearchResult>, String> {
     let root = PathBuf::from(root_path);
     file_tree::search_files(&root, &query, 40)
+}
+
+#[tauri::command]
+pub fn search_text_in_files(
+    root_path: String,
+    query: String,
+    file_mask: Option<String>,
+) -> Result<Vec<TextSearchResult>, String> {
+    let root = PathBuf::from(root_path);
+    file_tree::search_text_in_files(&root, &query, file_mask.as_deref(), 80)
 }
 
 #[tauri::command]

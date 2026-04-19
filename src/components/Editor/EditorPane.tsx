@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -16,20 +17,37 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import type { editor, IDisposable } from "monaco-editor";
-import type { SessionDiffTab, WorkbenchTab } from "../../types";
+import type {
+  EditorNavigationRequest,
+  EditorTab,
+  GitDiffTab,
+  SessionDiffTab,
+  WorkbenchTab,
+} from "../../types";
 import { DiffViewerPane } from "../DiffViewer/DiffViewerPane";
 import { FileIcon, isMarkdownFile, isSvgFile } from "../FileIcon/FileIcon";
+import { GitDiffViewerPane } from "../GitPanel/GitDiffViewerPane";
 import { renderMarkdown } from "./markdown";
 import { MONACO_THEME, resolveEditorLanguage } from "./monaco";
 
 interface EditorPaneProps {
   activeTab: WorkbenchTab | null;
   error: string | null;
+  navigationRequest?: EditorNavigationRequest | null;
   onCloseTab: (tabId: string) => void;
   onContentChange: (content: string) => void;
   onCursorChange: (line: number, column: number) => void;
+  onRequestCloseActiveTabShortcut?: () => void;
+  onRequestFileSearchShortcut?: () => void;
   onFocusWithin?: () => void;
-  onSessionDiffFilesReverted?: (payload: { paths: string[]; sessionId: string }) => Promise<void>;
+  onRequestGotoLineShortcut?: () => void;
+  onRequestNextTabShortcut?: () => void;
+  onRequestPreviousTabShortcut?: () => void;
+  onRequestSaveAllShortcut?: () => void;
+  onRequestTextSearchShortcut?: () => void;
+  onGitDiffDirtyChange?: (dirty: boolean) => void;
+  onInlineFilesChanged?: (payload: { paths: string[]; sessionId?: string }) => Promise<void>;
+  onSessionDiffDirtyChange?: (dirty: boolean) => void;
   onSelectTab: (tabId: string) => void;
   tabs: WorkbenchTab[];
 }
@@ -37,21 +55,46 @@ interface EditorPaneProps {
 export function EditorPane({
   activeTab,
   error,
+  navigationRequest,
   onCloseTab,
   onContentChange,
   onCursorChange,
+  onRequestCloseActiveTabShortcut,
+  onRequestFileSearchShortcut,
   onFocusWithin,
-  onSessionDiffFilesReverted,
+  onRequestGotoLineShortcut,
+  onRequestNextTabShortcut,
+  onRequestPreviousTabShortcut,
+  onRequestSaveAllShortcut,
+  onRequestTextSearchShortcut,
+  onGitDiffDirtyChange,
+  onInlineFilesChanged,
+  onSessionDiffDirtyChange,
   onSelectTab,
   tabs,
 }: EditorPaneProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const cursorListenerRef = useRef<IDisposable | null>(null);
+  const searchDecorationIdsRef = useRef<string[]>([]);
+  const searchDecoratedModelRef = useRef<editor.ITextModel | null>(null);
+  const searchDecorationTimeoutRef = useRef<number | null>(null);
+  const handledNavigationIdRef = useRef<number | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
   const markdownRef = useRef<HTMLDivElement | null>(null);
   const markdownScrollTopByPathRef = useRef<Record<string, number>>({});
+  const shortcutHandlersRef = useRef({
+    closeActiveTab: onRequestCloseActiveTabShortcut,
+    fileSearch: onRequestFileSearchShortcut,
+    gotoLine: onRequestGotoLineShortcut,
+    nextTab: onRequestNextTabShortcut,
+    previousTab: onRequestPreviousTabShortcut,
+    saveAll: onRequestSaveAllShortcut,
+    textSearch: onRequestTextSearchShortcut,
+  });
   const [previewByPath, setPreviewByPath] = useState<Record<string, boolean>>({});
-  const activeEditorTab = activeTab && !isSessionDiffTab(activeTab) ? activeTab : null;
+  const [editorMountVersion, setEditorMountVersion] = useState(0);
+  const activeEditorTab = isEditorTab(activeTab) ? activeTab : null;
   const breadcrumbs = activeTab?.relPath.split(/[\\/]/).filter(Boolean) ?? [];
   const language = useMemo(() => resolveEditorLanguage(activeEditorTab?.name), [activeEditorTab?.name]);
   const sessionDiffSummary = useMemo(() => {
@@ -116,8 +159,84 @@ export function EditorPane({
     [activeEditorTab?.isReadOnly],
   );
 
-  const handleEditorMount: OnMount = (mountedEditor) => {
+  const clearSearchDecorations = useCallback(() => {
+    if (searchDecorationTimeoutRef.current !== null) {
+      window.clearTimeout(searchDecorationTimeoutRef.current);
+      searchDecorationTimeoutRef.current = null;
+    }
+
+    if (!searchDecoratedModelRef.current || !searchDecorationIdsRef.current.length) {
+      searchDecorationIdsRef.current = [];
+      searchDecoratedModelRef.current = null;
+      return;
+    }
+
+    searchDecorationIdsRef.current = searchDecoratedModelRef.current.deltaDecorations(
+      searchDecorationIdsRef.current,
+      [],
+    );
+    searchDecoratedModelRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    shortcutHandlersRef.current = {
+      closeActiveTab: onRequestCloseActiveTabShortcut,
+      fileSearch: onRequestFileSearchShortcut,
+      gotoLine: onRequestGotoLineShortcut,
+      nextTab: onRequestNextTabShortcut,
+      previousTab: onRequestPreviousTabShortcut,
+      saveAll: onRequestSaveAllShortcut,
+      textSearch: onRequestTextSearchShortcut,
+    };
+  }, [
+    onRequestCloseActiveTabShortcut,
+    onRequestFileSearchShortcut,
+    onRequestGotoLineShortcut,
+    onRequestNextTabShortcut,
+    onRequestPreviousTabShortcut,
+    onRequestSaveAllShortcut,
+    onRequestTextSearchShortcut,
+  ]);
+
+  const handleEditorMount: OnMount = (mountedEditor, monaco) => {
     editorRef.current = mountedEditor;
+    monacoRef.current = monaco;
+    setEditorMountVersion((value) => value + 1);
+
+    const runEditorAction = (actionId: string) => {
+      void mountedEditor.getAction(actionId)?.run();
+    };
+
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL, () => {
+      shortcutHandlersRef.current.gotoLine?.();
+    });
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyR, () => {
+      shortcutHandlersRef.current.fileSearch?.();
+    });
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyH, () => {
+      shortcutHandlersRef.current.textSearch?.();
+    });
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS, () => {
+      shortcutHandlersRef.current.saveAll?.();
+    });
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, () => {
+      shortcutHandlersRef.current.closeActiveTab?.();
+    });
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageDown, () => {
+      shortcutHandlersRef.current.nextTab?.();
+    });
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.PageUp, () => {
+      shortcutHandlersRef.current.previousTab?.();
+    });
+    mountedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD, () => {
+      runEditorAction("editor.action.deleteLines");
+    });
+    mountedEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.UpArrow, () => {
+      runEditorAction("editor.action.moveLinesUpAction");
+    });
+    mountedEditor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.DownArrow, () => {
+      runEditorAction("editor.action.moveLinesDownAction");
+    });
 
     cursorListenerRef.current?.dispose();
     cursorListenerRef.current = mountedEditor.onDidChangeCursorPosition((event) => {
@@ -133,8 +252,9 @@ export function EditorPane({
   useEffect(
     () => () => {
       cursorListenerRef.current?.dispose();
+      clearSearchDecorations();
     },
-    [],
+    [clearSearchDecorations],
   );
 
   useEffect(() => {
@@ -145,6 +265,8 @@ export function EditorPane({
     cursorListenerRef.current?.dispose();
     cursorListenerRef.current = null;
     editorRef.current = null;
+    monacoRef.current = null;
+    clearSearchDecorations();
   }, [activeEditorTab]);
 
   useEffect(() => {
@@ -203,6 +325,99 @@ export function EditorPane({
     };
   }, [activeEditorTab?.absPath, isPreviewMode]);
 
+  useEffect(() => {
+    clearSearchDecorations();
+  }, [activeEditorTab?.absPath, clearSearchDecorations]);
+
+  useEffect(() => {
+    if (!navigationRequest || !activeEditorTab) {
+      return;
+    }
+
+    if (handledNavigationIdRef.current === navigationRequest.id) {
+      return;
+    }
+
+    if (activeEditorTab.absPath !== navigationRequest.absPath) {
+      return;
+    }
+
+    if (isPreviewMode && activeEditorTab.contentKind !== "image") {
+      setPreviewByPath((value) =>
+        value[activeEditorTab.absPath]
+          ? {
+              ...value,
+              [activeEditorTab.absPath]: false,
+            }
+          : value,
+      );
+      return;
+    }
+
+    if (!editorRef.current || !monacoRef.current) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const mountedEditor = editorRef.current;
+      const monaco = monacoRef.current;
+      const model = mountedEditor?.getModel();
+
+      if (!mountedEditor || !monaco || !model) {
+        return;
+      }
+
+      handledNavigationIdRef.current = navigationRequest.id;
+      clearSearchDecorations();
+
+      const lineNumber = clampLineNumber(navigationRequest.line, model.getLineCount());
+      const column = clampColumn(navigationRequest.column, model.getLineMaxColumn(lineNumber));
+      const endColumn = clampEndColumn(
+        column,
+        navigationRequest.matchLength,
+        model.getLineMaxColumn(lineNumber),
+      );
+
+      searchDecoratedModelRef.current = model;
+      searchDecorationIdsRef.current = model.deltaDecorations(
+        searchDecorationIdsRef.current,
+        [
+          {
+            options: {
+              className: "editor__search-hit-line",
+              isWholeLine: true,
+              linesDecorationsClassName: "editor__search-hit-gutter",
+            },
+            range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+          },
+          {
+            options: {
+              inlineClassName: "editor__search-hit-inline",
+            },
+            range: new monaco.Range(lineNumber, column, lineNumber, endColumn),
+          },
+        ],
+      );
+
+      mountedEditor.setPosition({ lineNumber, column });
+      mountedEditor.revealLineInCenter(lineNumber);
+      mountedEditor.focus();
+      onCursorChange(lineNumber, column);
+      searchDecorationTimeoutRef.current = window.setTimeout(() => {
+        clearSearchDecorations();
+      }, 1800);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeEditorTab,
+    clearSearchDecorations,
+    editorMountVersion,
+    isPreviewMode,
+    navigationRequest,
+    onCursorChange,
+  ]);
+
   function handleTabListWheel(event: ReactWheelEvent<HTMLDivElement>) {
     const tabListElement = event.currentTarget;
 
@@ -236,7 +451,7 @@ export function EditorPane({
       return;
     }
 
-    if (isSessionDiffTab(activeTab)) {
+    if (isSessionDiffTab(activeTab) || isGitDiffTab(activeTab)) {
       return;
     }
 
@@ -250,7 +465,7 @@ export function EditorPane({
           {tabs.map((tab) => {
             const tabId = getWorkbenchTabId(tab);
             const isActive = tabId === (activeTab ? getWorkbenchTabId(activeTab) : null);
-            const isDirty = !isSessionDiffTab(tab) && tab.content !== tab.savedContent;
+            const isDirty = isEditorTab(tab) && tab.content !== tab.savedContent;
 
             return (
               <button
@@ -262,7 +477,7 @@ export function EditorPane({
                 type="button"
               >
                 <span className="editor__tab-icon">
-                  {isSessionDiffTab(tab) ? (
+                  {isSessionDiffTab(tab) || isGitDiffTab(tab) ? (
                     <GitCompareArrows className="editor__tab-icon--diff" size={14} />
                   ) : (
                     <FileIcon fileName={tab.name} size="compact" />
@@ -367,9 +582,16 @@ export function EditorPane({
             theme={MONACO_THEME}
             value={activeEditorTab.content}
           />
+        ) : isGitDiffTab(activeTab) ? (
+          <GitDiffViewerPane
+            onDirtyStateChange={onGitDiffDirtyChange}
+            onFilesChanged={onInlineFilesChanged}
+            result={activeTab.result}
+          />
         ) : isSessionDiffTab(activeTab) ? (
           <DiffViewerPane
-            onSessionDiffFilesReverted={onSessionDiffFilesReverted}
+            onDirtyStateChange={onSessionDiffDirtyChange}
+            onSessionDiffFilesChanged={onInlineFilesChanged}
             result={activeTab.result}
             sessionTitle={activeTab.sessionTitle}
           />
@@ -388,14 +610,37 @@ export function EditorPane({
   );
 }
 
+function isEditorTab(tab: WorkbenchTab | null): tab is EditorTab {
+  return Boolean(tab && !("tabType" in tab));
+}
+
+function isGitDiffTab(tab: WorkbenchTab | null): tab is GitDiffTab {
+  return Boolean(tab && "tabType" in tab && tab.tabType === "gitDiff");
+}
+
 function isSessionDiffTab(tab: WorkbenchTab | null): tab is SessionDiffTab {
   return Boolean(tab && "tabType" in tab && tab.tabType === "sessionDiff");
 }
 
 function getWorkbenchTabId(tab: WorkbenchTab) {
-  return isSessionDiffTab(tab) ? tab.id : tab.absPath;
+  return isEditorTab(tab) ? tab.absPath : tab.id;
 }
 
 function createSvgPreviewSource(content: string) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(content)}`;
+}
+
+function clampLineNumber(lineNumber: number, lineCount: number) {
+  return Math.min(Math.max(lineNumber, 1), Math.max(lineCount, 1));
+}
+
+function clampColumn(column: number, maxColumn: number) {
+  return Math.min(Math.max(column, 1), Math.max(maxColumn, 1));
+}
+
+function clampEndColumn(column: number, matchLength: number, maxColumn: number) {
+  const resolvedMaxColumn = Math.max(maxColumn, column + 1);
+  const minimumEndColumn = Math.min(resolvedMaxColumn, column + 1);
+  const targetEndColumn = column + Math.max(matchLength, 1);
+  return Math.min(Math.max(targetEndColumn, minimumEndColumn), resolvedMaxColumn);
 }

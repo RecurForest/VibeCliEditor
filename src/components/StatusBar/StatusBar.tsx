@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Code2, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { CursorPosition, EditorTab, ShellKind } from "../../types";
+import type { CursorPosition, ShellKind, WorkbenchTab } from "../../types";
 
 interface StatusBarProps {
-  activeTab: EditorTab | null;
+  activeTab: WorkbenchTab | null;
   cursor: CursorPosition;
   rootPath: string | null;
   shellKind: ShellKind;
@@ -14,6 +14,7 @@ const NO_GIT_LABEL = "No Git";
 
 export function StatusBar({ activeTab, cursor, rootPath, shellKind }: StatusBarProps) {
   const [gitBranch, setGitBranch] = useState(NO_GIT_LABEL);
+  const activeTabLanguageLabel = resolveStatusBarTabLanguage(activeTab);
 
   useEffect(() => {
     if (!rootPath) {
@@ -75,7 +76,7 @@ export function StatusBar({ activeTab, cursor, rootPath, shellKind }: StatusBarP
         <span className="status-bar__item">UTF-8</span>
         <span className="status-bar__item">
           <Code2 size={12} />
-          {activeTab?.name.split(".").pop()?.toUpperCase() ?? "TXT"}
+          {activeTabLanguageLabel}
         </span>
         <span className="status-bar__item">{shellKind}</span>
         <span className="status-bar__item" title={rootPath ?? ""}>
@@ -84,4 +85,16 @@ export function StatusBar({ activeTab, cursor, rootPath, shellKind }: StatusBarP
       </div>
     </footer>
   );
+}
+
+function resolveStatusBarTabLanguage(activeTab: WorkbenchTab | null) {
+  if (!activeTab) {
+    return "TXT";
+  }
+
+  if ("tabType" in activeTab) {
+    return "DIFF";
+  }
+
+  return activeTab.name.split(".").pop()?.toUpperCase() ?? "TXT";
 }
