@@ -19,6 +19,13 @@ interface UseFileTreeOptions {
     placeholder: string;
     submitLabel: string;
   }) => Promise<string | null>;
+  requestConfirmation?: (options: {
+    cancelLabel?: string;
+    confirmLabel?: string;
+    message: string;
+    title?: string;
+    tone?: "default" | "danger";
+  }) => Promise<boolean>;
   rootPath: string | null;
 }
 
@@ -39,6 +46,7 @@ export function useFileTree({
   onRenamePath,
   onResolvedRootPath,
   refreshToken,
+  requestConfirmation,
   requestTextInput,
   rootPath,
 }: UseFileTreeOptions) {
@@ -502,12 +510,20 @@ export function useFileTree({
       return;
     }
 
-    const confirmMessage =
-      targetPaths.length === 1
-        ? `Delete "${getBaseName(targetPaths[0])}"?`
-        : `Delete ${targetPaths.length} selected items?`;
+    const targetLabel =
+      targetPaths.length === 1 ? `"${getBaseName(targetPaths[0])}"` : `${targetPaths.length} selected items`;
+    const confirmMessage = `Delete ${targetLabel}?\nThis will remove it from disk.`;
+    const isDeleteConfirmed = requestConfirmation
+      ? await requestConfirmation({
+          cancelLabel: "Keep",
+          confirmLabel: "Delete",
+          message: confirmMessage,
+          title: "Delete From Workspace",
+          tone: "danger",
+        })
+      : window.confirm(confirmMessage);
 
-    if (!window.confirm(confirmMessage)) {
+    if (!isDeleteConfirmed) {
       if (options.closeContextMenuOnCancel) {
         setContextMenu(null);
       }

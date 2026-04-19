@@ -24,6 +24,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { ConfirmDialog } from "./components/Dialog/ConfirmDialog";
 import { InputDialog } from "./components/Dialog/InputDialog";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { useEditor } from "./components/Editor/useEditor";
@@ -82,6 +83,14 @@ interface FileTreeInputDialogState {
   submitLabel: string;
 }
 
+interface FileTreeConfirmDialogState {
+  cancelLabel: string;
+  confirmLabel: string;
+  message: string;
+  title: string;
+  tone: "default" | "danger";
+}
+
 interface InlineTerminalTabState {
   id: string;
   title: string;
@@ -112,6 +121,9 @@ function App() {
   const [fileTreeInputDialog, setFileTreeInputDialog] = useState<FileTreeInputDialogState | null>(
     null,
   );
+  const [fileTreeConfirmDialog, setFileTreeConfirmDialog] = useState<FileTreeConfirmDialogState | null>(
+    null,
+  );
   const [workspaceSearchShortcutRequest, setWorkspaceSearchShortcutRequest] =
     useState<WorkspaceShortcutRequest | null>(null);
   const [pendingAgentLaunchProvider, setPendingAgentLaunchProvider] =
@@ -130,6 +142,7 @@ function App() {
   const titlebarPointerPressedRef = useRef(false);
   const lastAutoRefreshAtRef = useRef(0);
   const fileTreeInputDialogResolverRef = useRef<((value: string | null) => void) | null>(null);
+  const fileTreeConfirmDialogResolverRef = useRef<((value: boolean) => void) | null>(null);
 
   const editor = useEditor({
     rootPath,
@@ -214,6 +227,24 @@ function App() {
           initialValue,
           placeholder,
           submitLabel,
+        });
+      }),
+    requestConfirmation: ({
+      cancelLabel = "Cancel",
+      confirmLabel = "Confirm",
+      message,
+      title = "Confirm Action",
+      tone = "default",
+    }) =>
+      new Promise<boolean>((resolve) => {
+        fileTreeConfirmDialogResolverRef.current?.(false);
+        fileTreeConfirmDialogResolverRef.current = resolve;
+        setFileTreeConfirmDialog({
+          cancelLabel,
+          confirmLabel,
+          message,
+          title,
+          tone,
         });
       }),
     refreshToken,
@@ -860,10 +891,18 @@ function App() {
     setFileTreeInputDialog(null);
   }, []);
 
+  const handleFileTreeConfirmDialogClose = useCallback((value: boolean) => {
+    fileTreeConfirmDialogResolverRef.current?.(value);
+    fileTreeConfirmDialogResolverRef.current = null;
+    setFileTreeConfirmDialog(null);
+  }, []);
+
   useEffect(
     () => () => {
       fileTreeInputDialogResolverRef.current?.(null);
       fileTreeInputDialogResolverRef.current = null;
+      fileTreeConfirmDialogResolverRef.current?.(false);
+      fileTreeConfirmDialogResolverRef.current = null;
     },
     [],
   );
@@ -1807,6 +1846,16 @@ function App() {
         placeholder={fileTreeInputDialog?.placeholder ?? ""}
         submitLabel={fileTreeInputDialog?.submitLabel ?? "Confirm"}
       />
+      <ConfirmDialog
+        cancelLabel={fileTreeConfirmDialog?.cancelLabel ?? "Cancel"}
+        confirmLabel={fileTreeConfirmDialog?.confirmLabel ?? "Confirm"}
+        isOpen={Boolean(fileTreeConfirmDialog)}
+        message={fileTreeConfirmDialog?.message ?? ""}
+        onCancel={() => handleFileTreeConfirmDialogClose(false)}
+        onConfirm={() => handleFileTreeConfirmDialogClose(true)}
+        title={fileTreeConfirmDialog?.title ?? "Confirm Action"}
+        tone={fileTreeConfirmDialog?.tone ?? "default"}
+      />
     </main>
   );
 }
@@ -1830,7 +1879,7 @@ function shouldIgnoreWorkbenchShortcutTarget(target: EventTarget | null) {
     return false;
   }
 
-  if (target.closest(".monaco-editor, .xterm, .terminal-composer__input, .input-dialog__field")) {
+  if (target.closest(".monaco-editor, .xterm, .terminal-composer__input, .input-dialog__field, .confirm-dialog__panel")) {
     return true;
   }
 
