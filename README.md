@@ -2,6 +2,9 @@
 
 English | [简体中文](./README.zh-CN.md)
 
+> [!TIP]
+> Development and verification are currently done on Windows machines only, so macOS is not supported for now. If you need macOS support, feel free to modify the code yourself or open a branch and submit a PR.
+
 <p align="center">
   <img src="src/assets/vibe-cli-editor-logo.svg" alt="VibeCliEditor logo" width="96" />
 </p>

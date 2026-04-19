@@ -2,6 +2,9 @@
 
 [English](./README.md) | 简体中文
 
+> [!TIP]
+> 目前我手上只有 Windows 机器用于开发和验证，暂时还不兼容 macOS。如果你有这方面需求，可以自行修改代码，或者开分支提交 PR。
+
 <p align="center">
   <img src="src/assets/vibe-cli-editor-logo.svg" alt="VibeCliEditor logo" width="96" />
 </p>
